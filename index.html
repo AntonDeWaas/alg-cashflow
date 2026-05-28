@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Al Laith Group · Cash Flow Forecast — Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root{
+  --navy:#0D1B2A;--navy2:#162334;--blue:#1A5E9E;--blue-lt:#2E7DC4;
+  --teal:#0E7B6B;--gold:#C08B1A;--red:#B03A2E;--green:#0E7B4A;
+  --bg:#F4F6F9;--surface:#FFFFFF;--surface2:#EEF1F6;
+  --border:#D8DDE8;--text:#0D1B2A;--text2:#5A6478;--text3:#8E97A8;
+  --font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;--r:8px;--rl:12px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+/* ── Config overlay ── */
+#configOverlay{position:fixed;inset:0;background:rgba(13,27,42,0.92);z-index:999;display:flex;align-items:center;justify-content:center}
+.config-box{background:#fff;border-radius:16px;padding:36px 40px;max-width:560px;width:100%;box-shadow:0 24px 64px rgba(0,0,0,0.4)}
+.config-logo{font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px}
+.config-logo em{color:var(--blue);font-style:normal}
+.config-sub{font-size:12px;color:var(--text3);margin-bottom:28px}
+.config-label{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.7px;margin-bottom:6px}
+.config-input{width:100%;font-family:var(--mono);font-size:12px;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--r);color:var(--text);margin-bottom:16px;outline:none;transition:border-color 0.2s}
+.config-input:focus{border-color:var(--blue)}
+.config-btn{width:100%;padding:12px;background:var(--blue);color:#fff;border:none;border-radius:var(--r);font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer;transition:background 0.2s;margin-top:4px}
+.config-btn:hover{background:var(--blue-lt)}
+.config-steps{background:var(--bg);border-radius:var(--r);padding:16px;margin-bottom:20px;font-size:11px;color:var(--text2);line-height:1.7}
+.config-steps strong{color:var(--navy);display:block;margin-bottom:6px;font-size:12px}
+.config-steps ol{padding-left:16px}
+.config-steps li{margin-bottom:3px}
+.config-steps code{background:#E8EDF5;padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:10px;color:var(--blue)}
+.config-err{background:#FEE;border:1px solid #F7C1C1;border-radius:var(--r);padding:10px 12px;font-size:11px;color:var(--red);margin-bottom:12px;display:none}
+.skip-link{text-align:center;margin-top:14px;font-size:11px;color:var(--text3)}
+.skip-link a{color:var(--blue);cursor:pointer;text-decoration:underline}
+
+/* ── Topbar ── */
+.topbar{background:var(--navy);padding:0 24px;height:56px;display:flex;align-items:center;gap:14px;flex-shrink:0;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3)}
+.logo{font-size:15px;font-weight:600;color:#fff;letter-spacing:-0.3px;white-space:nowrap}
+.logo em{color:#64A8E8;font-style:normal}
+.badge{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7);font-size:10px;padding:3px 8px;border-radius:20px;font-family:var(--mono);letter-spacing:0.5px;white-space:nowrap}
+.live-dot{width:8px;height:8px;border-radius:50%;background:#2ECC71;animation:pulse 2s infinite;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.6;transform:scale(1.3)}}
+.live-label{font-size:11px;color:#2ECC71;font-weight:500;white-space:nowrap}
+.last-refresh{font-size:10px;color:rgba(255,255,255,0.4);font-family:var(--mono);white-space:nowrap}
+.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.tb-select{font-family:var(--font);font-size:12px;padding:5px 10px;border:1px solid rgba(255,255,255,0.2);border-radius:var(--r);background:rgba(255,255,255,0.08);color:#fff;height:32px;cursor:pointer;outline:none}
+.tb-select option{background:var(--navy)}
+.tb-btn{font-family:var(--font);font-size:12px;padding:0 12px;height:32px;border:1px solid rgba(255,255,255,0.2);border-radius:var(--r);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background 0.15s;white-space:nowrap}
+.tb-btn:hover{background:rgba(255,255,255,0.18)}
+.tb-btn.primary{background:var(--blue);border-color:var(--blue-lt)}
+.tb-btn.primary:hover{background:var(--blue-lt)}
+.tb-btn.warn{background:#C08B1A;border-color:#E0A020}
+.tb-btn.warn:hover{background:#E0A020}
+
+/* ── Tabs ── */
+.tabs-bar{background:var(--surface);border-bottom:1.5px solid var(--border);padding:0 24px;display:flex;gap:0;overflow-x:auto;flex-shrink:0}
+.tab{padding:12px 15px;font-size:13px;font-weight:400;cursor:pointer;border-bottom:2.5px solid transparent;color:var(--text2);white-space:nowrap;transition:color 0.15s;user-select:none}
+.tab:hover{color:var(--text)}.tab.active{border-bottom-color:var(--blue);color:var(--blue);font-weight:500}
+
+/* ── Loading ── */
+#loadingBar{height:3px;background:var(--blue);width:0%;transition:width 0.4s;position:fixed;top:56px;left:0;z-index:200}
+.loading-overlay{position:fixed;inset:0;background:rgba(244,246,249,0.85);z-index:150;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+.loading-overlay.show{display:flex}
+.spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:13px;color:var(--text2)}
+
+/* ── Main ── */
+.main{flex:1;padding:20px 24px;overflow:auto;max-width:1500px;width:100%;margin:0 auto}
+
+/* ── KPIs ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:20px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:var(--rl) var(--rl) 0 0}
+.kpi.blue::before{background:var(--blue)}.kpi.green::before{background:var(--green)}.kpi.red::before{background:var(--red)}.kpi.gold::before{background:var(--gold)}.kpi.teal::before{background:var(--teal)}
+.kpi-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;font-weight:500}
+.kpi-val{font-size:21px;font-weight:600;letter-spacing:-0.5px;font-family:var(--mono)}
+.kpi-val.pos{color:var(--green)}.kpi-val.neg{color:var(--red)}
+.kpi-sub{font-size:10px;color:var(--text3);margin-top:3px}
+
+/* ── Sections ── */
+.sec{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;margin-bottom:16px}
+.sec-title{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+
+/* ── Company cards ── */
+.co-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:16px}
+.co-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:12px 14px;transition:all 0.2s;cursor:pointer}
+.co-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.08);transform:translateY(-1px)}
+.co-card-hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px}
+.co-card-name{font-size:11px;font-weight:500;color:var(--text);line-height:1.3}
+.co-pill{font-size:10px;padding:2px 7px;border-radius:20px;font-family:var(--mono);white-space:nowrap}
+.co-closing{font-size:19px;font-weight:600;letter-spacing:-0.5px;font-family:var(--mono)}
+.co-closing.pos{color:var(--green)}.co-closing.neg{color:var(--red)}
+.co-note{font-size:10px;color:var(--text3);margin-top:1px}
+.pbar{height:4px;background:var(--surface2);border-radius:2px;overflow:hidden;margin-top:8px}
+.pfill{height:100%;border-radius:2px}
+.co-footer{display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px}
+.warn-badge{display:inline-block;background:#FEF3CD;color:#9A6B00;font-size:9px;padding:1px 6px;border-radius:3px;margin-left:5px;font-family:var(--mono)}
+
+/* ── Charts ── */
+.chart-wrap{position:relative;width:100%;height:240px}
+.chart-wrap-sm{position:relative;width:100%;height:185px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:700px){.grid2{grid-template-columns:1fr}}
+
+/* ── Legend ── */
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:10px}
+.leg{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)}
+.leg-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+
+/* ── Tables ── */
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.detail-table{width:100%;border-collapse:collapse;font-size:11px;min-width:900px}
+.detail-table th{background:var(--navy);color:rgba(255,255,255,0.8);font-weight:500;padding:7px 9px;text-align:right;border:1px solid rgba(255,255,255,0.08);white-space:nowrap;font-size:10px;letter-spacing:0.3px;position:sticky;top:0;z-index:2}
+.detail-table th.lbl{text-align:left;min-width:200px;background:var(--navy2)}
+.detail-table th.ytot{background:#0A1520;color:#A0C4E8}
+.detail-table th.ytot25{background:#0A1520;color:#7A9AB0}
+.detail-table td{padding:5px 9px;border:1px solid var(--border);text-align:right;white-space:nowrap;font-family:var(--mono);font-size:11px}
+.detail-table td.lbl{text-align:left;font-family:var(--font);font-size:11px;padding-left:10px}
+.detail-table td.lbl.indent{padding-left:22px;color:var(--text2)}
+.detail-table tr.row-section td{background:var(--navy);color:#fff;font-size:10px;font-weight:600;letter-spacing:0.5px}
+.detail-table tr.row-total td{background:var(--navy2);color:#fff;font-weight:700}
+.detail-table tr.row-subtotal td{background:#EEF1F8;font-weight:600;color:var(--navy)}
+.detail-table tr.row-detail:nth-child(even) td{background:#FAFBFD}
+.detail-table tr.row-detail:hover td{background:#EEF4FF}
+.detail-table td.pos{color:var(--green)}.detail-table td.neg{color:var(--red)}.detail-table td.muted{color:var(--text3)}
+.detail-table tr.row-total td.ytot{background:#0A1520;color:#A0C4E8}
+.detail-table tr.row-total td.ytot25{background:#0A1520;color:#7A9AB0}
+.detail-table tr.row-subtotal td.ytot{background:#1A3050;color:#A0C4E8}
+.detail-table tr.row-subtotal td.ytot25{background:#1A3050;color:#7A9AB0}
+.detail-table tr.row-detail td.ytot{background:#DDE8F5}
+.detail-table tr.row-detail td.ytot25{background:#E8EEF4;color:var(--text3)}
+
+/* ── Entity / Co tabs ── */
+.entity-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.entity-tab,.co-tab{font-size:11px;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;transition:all 0.15s;font-family:var(--mono);font-weight:500}
+.entity-tab:hover,.co-tab:hover{border-color:var(--blue);color:var(--blue)}
+.entity-tab.active,.co-tab.active{color:#fff;border-color:transparent;font-weight:600}
+.co-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+
+/* ── Error banner ── */
+.err-banner{background:#FEE;border:1px solid #F7C1C1;border-radius:var(--r);padding:12px 16px;font-size:12px;color:var(--red);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+
+/* ── Group legend ── */
+.grp-leg-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2);margin-bottom:4px}
+.grp-leg-dot{width:12px;height:12px;border-radius:2px;flex-shrink:0}
+.grp-leg-name{flex:1}.grp-leg-val{font-family:var(--mono);font-weight:500;color:var(--text)}
+.info-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);margin-bottom:10px;flex-wrap:wrap}
+
+.app-footer{background:var(--navy);color:rgba(255,255,255,0.35);font-size:10px;padding:10px 24px;text-align:center;letter-spacing:0.5px}
+@media print{.topbar,.tabs-bar,.app-footer,#configOverlay{display:none}.main{padding:0}.sec{break-inside:avoid}}
+</style>
+</head>
+<body>
+
+<!-- ── Config Overlay ── -->
+<div id="configOverlay">
+  <div class="config-box">
+    <div class="config-logo">Al Laith Group · <em>Cash Flow Forecast</em></div>
+    <div class="config-sub">Live connection to Google Sheets · One-time setup</div>
+
+    <div class="config-steps">
+      <strong>&#9654; How to get your API Key &amp; Sheet ID (5 minutes)</strong>
+      <ol>
+        <li>Go to <code>console.cloud.google.com</code> → Create a project</li>
+        <li>Search <code>Google Sheets API</code> → Enable it</li>
+        <li>Go to <code>APIs &amp; Services → Credentials</code> → Create API Key</li>
+        <li>Restrict the key to <code>Google Sheets API</code> only (recommended)</li>
+        <li>Open your Google Sheet → copy the ID from the URL:<br>
+            <code>docs.google.com/spreadsheets/d/<b>SHEET_ID_HERE</b>/edit</code></li>
+        <li>Make the Google Sheet <b>Anyone with link can view</b> (Share settings)</li>
+      </ol>
+    </div>
+
+    <div id="configErr" class="config-err"></div>
+
+    <div class="config-label">Google Sheets API Key</div>
+    <input class="config-input" id="apiKeyInput" type="password" placeholder="AIzaSy..." autocomplete="off">
+
+    <div class="config-label">Google Spreadsheet ID</div>
+    <input class="config-input" id="sheetIdInput" type="text" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms">
+
+    <div class="config-label">Auto-refresh interval</div>
+    <select class="config-input" id="refreshInterval" style="height:38px">
+      <option value="0">Manual refresh only</option>
+      <option value="300">Every 5 minutes</option>
+      <option value="600" selected>Every 10 minutes</option>
+      <option value="1800">Every 30 minutes</option>
+      <option value="3600">Every hour</option>
+    </select>
+
+    <button class="config-btn" onclick="saveConfig()">&#9889; Connect &amp; Load Data</button>
+    <div class="skip-link">Already configured? <a onclick="loadSavedConfig()">Load saved settings</a></div>
+  </div>
+</div>
+
+<!-- ── Loading overlay ── -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">Connecting to Google Sheets...</div>
+</div>
+<div id="loadingBar"></div>
+
+<!-- ── App Shell ── -->
+<div class="topbar">
+  <div class="logo">Al Laith Group · <em>Cash Flow Forecast</em></div>
+  <span class="badge" id="sheetBadge">AED 000's</span>
+  <div class="live-dot" id="liveDot" style="display:none"></div>
+  <span class="live-label" id="liveLabel" style="display:none">LIVE</span>
+  <span class="last-refresh" id="lastRefresh"></span>
+  <div class="topbar-right">
+    <select class="tb-select" id="coSel" onchange="render()">
+      <option value="ALL">All Companies</option>
+      <option value="ALPS">ALPS</option>
+      <option value="ALICLER">ALICLER</option>
+      <option value="OMAN">Oman</option>
+      <option value="SS">SS</option>
+      <option value="KSA">KSA</option>
+      <option value="ALPS_BR">ALPS BR</option>
+      <option value="ALPS_UZ">ALPS UZ</option>
+    </select>
+    <button class="tb-btn warn" onclick="manualRefresh()">&#8635; Refresh</button>
+    <button class="tb-btn" onclick="showConfig()">&#9881; Settings</button>
+    <button class="tb-btn" onclick="window.print()">&#128438; Print</button>
+    <button class="tb-btn primary" onclick="exportCSV()">&#8595; Export CSV</button>
+  </div>
+</div>
+
+<div class="tabs-bar">
+  <div class="tab active"  onclick="switchTab('dashboard',this)">Dashboard</div>
+  <div class="tab" onclick="switchTab('entity',this)">Entity Detail</div>
+  <div class="tab" onclick="switchTab('weekly',this)">Weekly Detail</div>
+  <div class="tab" onclick="switchTab('monthly',this)">Monthly Summary</div>
+  <div class="tab" onclick="switchTab('group',this)">Group View</div>
+</div>
+
+<div class="main" id="mainContent">
+  <div style="text-align:center;padding:80px 20px;color:var(--text3)">
+    <div style="font-size:48px;margin-bottom:16px">&#128196;</div>
+    <div style="font-size:16px;font-weight:500;color:var(--text2);margin-bottom:8px">Connect your Google Sheet to get started</div>
+    <div style="font-size:13px">Enter your API key and Sheet ID in the setup panel</div>
+  </div>
+</div>
+
+<div class="app-footer">AL LAITH GROUP &nbsp;·&nbsp; CASH FLOW FORECAST 2026 &nbsp;·&nbsp; LIVE FROM GOOGLE SHEETS &nbsp;·&nbsp; AED 000's</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  CONFIGURATION
+// ═══════════════════════════════════════════════════════
+const COLORS=['#1A5E9E','#0E7B4A','#C08B1A','#8B2355','#533C7D','#0E6E78','#7C3F00'];
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Map your sheet tab names → app company codes
+// ⚠️ UPDATE THESE to match your exact Google Sheet tab names
+const SHEET_TAB_MAP = {
+  'ALPS-CB':    'ALPS',
+  'ALICLER-CB': 'ALICLER',
+  'Oman-CB':    'OMAN',
+  'SS-CB':      'SS',
+  'Ksa-CB':     'KSA',
+  'ALPS BR-CB': 'ALPS_BR',
+  'ALPS-UZ-CB': 'ALPS_UZ',
+};
+
+const COMPANIES={
+  ALPS:   {name:'Al Laith Projects (ALPS)',short:'ALPS'},
+  ALICLER:{name:'ALICLER',               short:'ALICLER'},
+  OMAN:   {name:'Oman Operations',        short:'OMAN'},
+  SS:     {name:'Site Services (SS)',     short:'SS'},
+  KSA:    {name:'KSA — Al Laith United', short:'KSA'},
+  ALPS_BR:{name:'ALPS BR',               short:'ALPS BR'},
+  ALPS_UZ:{name:'ALPS UZ',              short:'ALPS UZ'},
+};
+const CO_KEYS=Object.keys(COMPANIES);
+
+// Row numbers in your sheet for each metric (1-based)
+const ROW_MAP = {
+  opening:       11,
+  total_inflows: 33,
+  total_outflows:102,
+  closing:       104,
+  salaries:      60,
+  rent:          64,
+  vat:           73,
+  capex:         99,
+  collect_gt1:   17,
+  collect_12m:   18,
+  debt_2021:     20,
+  debt_2022:     21,
+  debt_2023:     22,
+  advance:       27,
+  interco:       29,
+  payments:      37,
+  proj_exp:      39,
+  insurance:     77,
+  fuel:          69,
+  manpower:      61,
+};
+
+// Monthly column letters in your sheet (TOT columns for Jan/Feb/Mar, then monthly)
+const COL_MAP = {
+  Jan:'EW', Feb:'FC', Mar:'FI',
+  Apr:'FJ', May:'FK', Jun:'FL',
+  Jul:'FM', Aug:'FN', Sep:'FO',
+  Oct:'FP', Nov:'FQ', Dec:'FR',
+  Total_2026:'FS', Total_2025:'FT'
+};
+
+// Weekly columns
+const WEEK_COL_MAP = {
+  Jan_W1:'ES',Jan_W2:'ET',Jan_W3:'EU',Jan_W4:'EV',Jan_TOT:'EW',
+  Feb_W1:'EX',Feb_W2:'EY',Feb_W3:'EZ',Feb_W4:'FA',Feb_TOT:'FC',
+  Mar_W1:'FD',Mar_W2:'FE',Mar_W3:'FF',Mar_W4:'FG',Mar_TOT:'FI',
+};
+
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let API_KEY = '', SHEET_ID = '', REFRESH_SECS = 600;
+let DATA = {};        // { ALPS: { opening: {Jan:..}, .. }, .. }
+let DETAIL_DATA = {}; // { ALPS: [{label,type,values},...] }
+let refreshTimer = null;
+let currentTab = 'dashboard';
+let charts = {};
+let _eco='ALPS', _wco='ALPS', _mco='ALPS';
+let dataLoaded = false;
+
+// ═══════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════
+function saveConfig(){
+  const key = document.getElementById('apiKeyInput').value.trim();
+  const sid = document.getElementById('sheetIdInput').value.trim();
+  const ri  = parseInt(document.getElementById('refreshInterval').value);
+  if(!key||!sid){
+    showErr('Please enter both API Key and Sheet ID.');
+    return;
+  }
+  API_KEY=key; SHEET_ID=sid; REFRESH_SECS=ri;
+  localStorage.setItem('alg_api_key', key);
+  localStorage.setItem('alg_sheet_id', sid);
+  localStorage.setItem('alg_refresh', ri);
+  document.getElementById('configOverlay').style.display='none';
+  startApp();
+}
+
+function loadSavedConfig(){
+  const key=localStorage.getItem('alg_api_key');
+  const sid=localStorage.getItem('alg_sheet_id');
+  const ri =localStorage.getItem('alg_refresh');
+  if(key&&sid){
+    API_KEY=key; SHEET_ID=sid; REFRESH_SECS=ri?parseInt(ri):600;
+    document.getElementById('configOverlay').style.display='none';
+    startApp();
+  } else {
+    showErr('No saved configuration found. Please enter your credentials.');
+  }
+}
+
+function showConfig(){
+  document.getElementById('apiKeyInput').value=API_KEY;
+  document.getElementById('sheetIdInput').value=SHEET_ID;
+  document.getElementById('refreshInterval').value=REFRESH_SECS;
+  document.getElementById('configOverlay').style.display='flex';
+}
+
+function showErr(msg){
+  const el=document.getElementById('configErr');
+  el.textContent='⚠ '+msg; el.style.display='block';
+}
+
+// ═══════════════════════════════════════════════════════
+//  GOOGLE SHEETS API
+// ═══════════════════════════════════════════════════════
+function colLetterToIndex(col){
+  let idx=0;
+  for(let i=0;i<col.length;i++){
+    idx=idx*26+(col.charCodeAt(i)-64);
+  }
+  return idx-1; // 0-based
+}
+
+async function fetchRange(sheetName, range){
+  const enc=encodeURIComponent(`'${sheetName}'!${range}`);
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${enc}?key=${API_KEY}`;
+  const res=await fetch(url);
+  if(!res.ok){
+    const err=await res.json();
+    throw new Error(err.error?.message||`HTTP ${res.status}`);
+  }
+  const data=await res.json();
+  return data.values||[];
+}
+
+function parseNum(v){
+  if(v===undefined||v===null||v==='')return 0;
+  const n=parseFloat(String(v).replace(/,/g,''));
+  return isNaN(n)?0:n;
+}
+
+async function loadSheetData(sheetName, coCode){
+  // Fetch a big range covering all rows and columns we need
+  // Rows 1-110, columns ES to FU (weekly + monthly)
+  const values = await fetchRange(sheetName, 'ES1:FU110');
+  
+  // Helper: get value at row, col (0-based from ES)
+  const ES_IDX = colLetterToIndex('ES');
+  function getVal(rowNum, colLetter){
+    const rowIdx = rowNum - 1;
+    const colIdx = colLetterToIndex(colLetter) - ES_IDX;
+    if(!values[rowIdx]) return 0;
+    return parseNum(values[rowIdx][colIdx]);
+  }
+
+  // Build summary data
+  const summary = {};
+  Object.entries(ROW_MAP).forEach(([metric, rowNum])=>{
+    summary[metric] = {};
+    // Monthly
+    Object.entries(COL_MAP).forEach(([period, col])=>{
+      summary[metric][period] = getVal(rowNum, col);
+    });
+    // Weekly
+    Object.entries(WEEK_COL_MAP).forEach(([period, col])=>{
+      summary[metric][period] = getVal(rowNum, col);
+    });
+  });
+
+  DATA[coCode] = summary;
+
+  // Build detail data (all line items)
+  const ALL_DETAIL_ROWS = [
+    {row:11,  label:'Opening Cash Balance',            type:'total'},
+    {row:13,  label:'ESTIMATED CASH INFLOWS',          type:'section'},
+    {row:17,  label:'Collect Forecast >1 Year Debt',   type:'detail'},
+    {row:18,  label:'Collect Forecast 12 Months Debt', type:'detail'},
+    {row:19,  label:'Debt Collection Pre-2021',        type:'detail'},
+    {row:20,  label:'Debt Collection 2021',            type:'detail'},
+    {row:21,  label:'Debt Collection 2022',            type:'detail'},
+    {row:22,  label:'Debt Collection 2023',            type:'detail'},
+    {row:27,  label:'Advance Received',                type:'detail'},
+    {row:29,  label:'Intercompany Transfers',          type:'detail'},
+    {row:31,  label:'Others (Inflow)',                 type:'detail'},
+    {row:33,  label:'TOTAL INFLOWS',                   type:'total'},
+    {row:35,  label:'ESTIMATED CASH OUTFLOWS',         type:'section'},
+    {row:37,  label:'Payments to Suppliers',           type:'detail'},
+    {row:38,  label:'Sub Contractors',                 type:'detail'},
+    {row:39,  label:'Project Expenses',                type:'detail'},
+    {row:41,  label:'Payment for Fixed Services',      type:'detail'},
+    {row:42,  label:'Payments in Advance',             type:'detail'},
+    {row:46,  label:'> 180 Days',                      type:'detail'},
+    {row:47,  label:'91-180 Days',                     type:'detail'},
+    {row:48,  label:'31-90 Days',                      type:'detail'},
+    {row:49,  label:'0-30 Days',                       type:'detail'},
+    {row:54,  label:'Total Supplier Payments',         type:'subtotal'},
+    {row:59,  label:'Fixed Cash Expenses',             type:'section'},
+    {row:60,  label:'Salaries & Wages',                type:'detail'},
+    {row:61,  label:'Manpower Supplies',               type:'detail'},
+    {row:62,  label:'Telecommunication',               type:'detail'},
+    {row:63,  label:'Utility',                         type:'detail'},
+    {row:64,  label:'Rent',                            type:'detail'},
+    {row:65,  label:'Auto Loan',                       type:'detail'},
+    {row:66,  label:'Mortgage',                        type:'detail'},
+    {row:69,  label:'Fuel',                            type:'detail'},
+    {row:71,  label:'Bank Charges',                    type:'detail'},
+    {row:72,  label:'Bank Guarantees',                 type:'detail'},
+    {row:73,  label:'VAT / Tax',                       type:'detail'},
+    {row:74,  label:'Trade License',                   type:'detail'},
+    {row:77,  label:'Insurance',                       type:'detail'},
+    {row:78,  label:'Credit Cards',                    type:'detail'},
+    {row:79,  label:'Petty Cash',                      type:'detail'},
+    {row:80,  label:'Office & IT Maintenance',         type:'detail'},
+    {row:81,  label:'Sub-total Fixed Expenses',        type:'subtotal'},
+    {row:83,  label:'Variable Cash Expenses',          type:'section'},
+    {row:84,  label:'Bonus',                           type:'detail'},
+    {row:85,  label:'Final Settlement / Leave Salary', type:'detail'},
+    {row:87,  label:'Staff Ticket / Travel',           type:'detail'},
+    {row:89,  label:'Marketing & Branding',            type:'detail'},
+    {row:91,  label:'Intercompany Loan / Dividend',    type:'detail'},
+    {row:93,  label:'Legal & Professional Fees',       type:'detail'},
+    {row:97,  label:'Sub-total Variable Expenses',     type:'subtotal'},
+    {row:99,  label:'Capital Expenses (CAPEX)',        type:'detail'},
+    {row:102, label:'TOTAL OUTFLOWS',                  type:'total'},
+    {row:104, label:'CLOSING CASH BALANCE',            type:'total'},
+  ];
+
+  DETAIL_DATA[coCode] = ALL_DETAIL_ROWS.map(r=>{
+    const vals = {};
+    Object.entries(COL_MAP).forEach(([p,col])=>{ vals[p]=getVal(r.row,col); });
+    return {...r, values:vals};
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  APP LIFECYCLE
+// ═══════════════════════════════════════════════════════
+async function startApp(){
+  showLoading('Connecting to Google Sheets...');
+  setLoadingBar(10);
+  try {
+    const tabs = Object.keys(SHEET_TAB_MAP);
+    let done = 0;
+    for(const tab of tabs){
+      const co = SHEET_TAB_MAP[tab];
+      setLoadingText(`Loading ${COMPANIES[co].name}...`);
+      await loadSheetData(tab, co);
+      done++;
+      setLoadingBar(10 + (done/tabs.length)*85);
+    }
+    setLoadingBar(100);
+    dataLoaded = true;
+    hideLoading();
+    showLiveIndicator();
+    updateLastRefresh();
+    render();
+    scheduleRefresh();
+  } catch(e){
+    hideLoading();
+    setLoadingBar(0);
+    showAppError(e.message);
+  }
+}
+
+async function manualRefresh(){
+  if(!API_KEY||!SHEET_ID){ showConfig(); return; }
+  showLoading('Refreshing data...');
+  setLoadingBar(5);
+  try {
+    const tabs=Object.keys(SHEET_TAB_MAP);
+    let done=0;
+    for(const tab of tabs){
+      const co=SHEET_TAB_MAP[tab];
+      setLoadingText(`Refreshing ${COMPANIES[co].name}...`);
+      await loadSheetData(tab,co);
+      done++;
+      setLoadingBar(5+(done/tabs.length)*90);
+    }
+    setLoadingBar(100);
+    hideLoading();
+    updateLastRefresh();
+    render();
+  } catch(e){
+    hideLoading();
+    showAppError(e.message);
+  }
+}
+
+function scheduleRefresh(){
+  if(refreshTimer) clearInterval(refreshTimer);
+  if(REFRESH_SECS>0){
+    refreshTimer=setInterval(()=>manualRefresh(), REFRESH_SECS*1000);
+  }
+}
+
+function showLoading(msg){
+  document.getElementById('loadingOverlay').classList.add('show');
+  document.getElementById('loadingText').textContent=msg||'Loading...';
+}
+function hideLoading(){ document.getElementById('loadingOverlay').classList.remove('show'); setLoadingBar(0); }
+function setLoadingBar(pct){ document.getElementById('loadingBar').style.width=pct+'%'; }
+function setLoadingText(t){ document.getElementById('loadingText').textContent=t; }
+function showLiveIndicator(){
+  document.getElementById('liveDot').style.display='block';
+  document.getElementById('liveLabel').style.display='block';
+  document.getElementById('sheetBadge').textContent='AED 000\'s · LIVE';
+}
+function updateLastRefresh(){
+  const now=new Date();
+  document.getElementById('lastRefresh').textContent=
+    'Last refresh: '+now.toLocaleTimeString('en-AE',{hour:'2-digit',minute:'2-digit'});
+}
+function showAppError(msg){
+  document.getElementById('mainContent').innerHTML=
+    `<div class="err-banner">&#9888; Failed to load data: ${msg}. <a href="#" onclick="showConfig();return false">Check settings</a></div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════
+function g(co,metric,period){ return DATA[co]?.(metric)?.[period]||0; }
+function fmt(n){ if(!n&&n!==0)return'—'; return n.toLocaleString('en-AE',{minimumFractionDigits:1,maximumFractionDigits:1}); }
+function fmtM(n){ const a=Math.abs(n); if(a>=1000)return(n<0?'-':'')+Math.abs(n/1000).toFixed(1)+'M'; return(n<0?'-':'')+Math.abs(n).toFixed(0)+'K'; }
+function activeCompanies(){ const s=document.getElementById('coSel').value; return s==='ALL'?CO_KEYS:[s]; }
+function switchTab(tab,el){ currentTab=tab; document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); render(); }
+function destroyCharts(){ Object.values(charts).forEach(c=>{try{c.destroy();}catch(e){}}); charts={}; }
+function render(){ if(!dataLoaded)return; destroyCharts(); if(currentTab==='dashboard')renderDashboard(); else if(currentTab==='entity')renderEntity(); else if(currentTab==='weekly')renderWeekly(); else if(currentTab==='monthly')renderMonthly(); else if(currentTab==='group')renderGroup(); }
+function goToEntity(co){ _eco=co; document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); document.querySelectorAll('.tab')[1].classList.add('active'); currentTab='entity'; render(); }
+
+// ═══════════════════════════════════════════════════════
+//  DASHBOARD
+// ═══════════════════════════════════════════════════════
+function renderDashboard(){
+  const cos=activeCompanies();
+  const totalIn=cos.reduce((s,co)=>s+g(co,'total_inflows','Total_2026'),0);
+  const totalOut=cos.reduce((s,co)=>s+g(co,'total_outflows','Total_2026'),0);
+  const net=totalIn-totalOut;
+  const opening=cos.reduce((s,co)=>s+g(co,'opening','Total_2026'),0);
+  const closing=cos.reduce((s,co)=>s+g(co,'closing','Total_2026'),0);
+  const in25=cos.reduce((s,co)=>s+g(co,'total_inflows','Total_2025'),0);
+  const yoy=in25>0?((totalIn-in25)/in25*100):0;
+  const moPer=MONTHS;
+  const inData=moPer.map(p=>+(cos.reduce((s,co)=>s+g(co,'total_inflows',p),0)).toFixed(1));
+  const outData=moPer.map(p=>+(cos.reduce((s,co)=>s+g(co,'total_outflows',p),0)).toFixed(1));
+  const closeData=moPer.map(p=>+(cos.reduce((s,co)=>s+g(co,'closing',p),0)).toFixed(1));
+  const coCards=CO_KEYS.map((co,i)=>{
+    const cl=g(co,'closing','Total_2026'),inf=g(co,'total_inflows','Total_2026'),nt=inf-g(co,'total_outflows','Total_2026');
+    const pct=totalIn>0?Math.max(0,Math.min(100,Math.max(0,inf)/totalIn*100)):0;
+    return `<div class="co-card" onclick="goToEntity('${co}')" title="Click for full detail">
+      <div class="co-card-hdr"><div class="co-card-name">${COMPANIES[co].name}${cl<0?'<span class="warn-badge">NEGATIVE</span>':''}</div><span class="co-pill" style="background:${COLORS[i]}18;color:${COLORS[i]}">${COMPANIES[co].short}</span></div>
+      <div class="co-closing ${cl>=0?'pos':'neg'}">${fmt(cl)}</div>
+      <div class="co-note">2026 year-end closing · click for detail</div>
+      <div class="pbar"><div class="pfill" style="width:${pct.toFixed(1)}%;background:${COLORS[i]}"></div></div>
+      <div class="co-footer"><span>Net: <b style="color:${nt>=0?'var(--green)':'var(--red)'}">${fmt(nt)}</b></span><span>Inflows: ${fmt(inf)}</span></div>
+    </div>`;
+  }).join('');
+  document.getElementById('mainContent').innerHTML=`
+    <div class="kpi-grid">
+      <div class="kpi green"><div class="kpi-label">Total inflows 2026</div><div class="kpi-val pos">${fmt(totalIn)}</div><div class="kpi-sub">YoY: ${yoy>=0?'+':''}${yoy.toFixed(1)}% vs 2025</div></div>
+      <div class="kpi red"><div class="kpi-label">Total outflows 2026</div><div class="kpi-val neg">${fmt(totalOut)}</div></div>
+      <div class="kpi ${net>=0?'teal':'red'}"><div class="kpi-label">Net cash movement</div><div class="kpi-val ${net>=0?'pos':'neg'}">${fmt(net)}</div></div>
+      <div class="kpi blue"><div class="kpi-label">Opening balance</div><div class="kpi-val">${fmt(opening)}</div><div class="kpi-sub">1 Jan 2026</div></div>
+      <div class="kpi gold"><div class="kpi-label">Closing balance</div><div class="kpi-val">${fmt(closing)}</div><div class="kpi-sub">31 Dec 2026</div></div>
+    </div>
+    <div class="co-grid">${coCards}</div>
+    <div class="sec"><div class="sec-title">&#9646; Monthly inflows vs outflows — 2026</div>
+      <div class="legend"><div class="leg"><div class="leg-dot" style="background:#1A5E9E"></div>Inflows</div><div class="leg"><div class="leg-dot" style="background:#B03A2E"></div>Outflows</div></div>
+      <div class="chart-wrap"><canvas id="c1" role="img" aria-label="Monthly inflows and outflows 2026"></canvas></div></div>
+    <div class="sec"><div class="sec-title">&#9646; Closing balance trend — 2026</div>
+      <div class="chart-wrap-sm"><canvas id="c2" role="img" aria-label="Closing balance trend 2026"></canvas></div></div>`;
+  setTimeout(()=>{
+    const c1=document.getElementById('c1');
+    if(c1)charts.c1=new Chart(c1,{type:'bar',data:{labels:MONTHS,datasets:[{label:'Inflows',data:inData,backgroundColor:'#1A5E9E30',borderColor:'#1A5E9E',borderWidth:1.5},{label:'Outflows',data:outData,backgroundColor:'#B03A2E30',borderColor:'#B03A2E',borderWidth:1.5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:11},autoSkip:false,maxRotation:0}},y:{ticks:{callback:v=>fmtM(v),font:{size:10}},grid:{color:'#E8EBF2'}}}}});
+    const c2=document.getElementById('c2');
+    if(c2)charts.c2=new Chart(c2,{type:'line',data:{labels:MONTHS,datasets:[{label:'Closing',data:closeData,borderColor:'#1A5E9E',backgroundColor:'#1A5E9E10',fill:true,tension:0.35,pointRadius:4,pointBackgroundColor:'#1A5E9E'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:11}}},y:{ticks:{callback:v=>fmtM(v),font:{size:10}},grid:{color:'#E8EBF2'}}}}});
+  },60);
+}
+
+// ═══════════════════════════════════════════════════════
+//  ENTITY DETAIL
+// ═══════════════════════════════════════════════════════
+function renderEntity(){
+  if(!CO_KEYS.includes(_eco))_eco=CO_KEYS[0];
+  const ci=CO_KEYS.indexOf(_eco), color=COLORS[ci];
+  const rows=DETAIL_DATA[_eco]||[];
+  const periods=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Total_2026','Total_2025'];
+  const pLabels=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','2026 Total','2025 Total'];
+  const entityTabs=CO_KEYS.map((co,i)=>`<button class="entity-tab${_eco===co?' active':''}" style="${_eco===co?'background:'+COLORS[i]+';border-color:'+COLORS[i]+';':''}" onclick="_eco='${co}';renderEntity()">${COMPANIES[co].short}</button>`).join('');
+  let tableRows='';
+  rows.forEach(r=>{
+    const vals=periods.map((p,pi)=>{
+      const v=r.values?.[p]||0,isYtot=p==='Total_2026',isY25=p==='Total_2025';
+      const cls=isYtot?'ytot':isY25?'ytot25':'';
+      if(r.type==='section') return `<td class="${cls}"></td>`;
+      const numCls=v<0?'neg':v>0.001?'pos':'muted';
+      const display=Math.abs(v)<0.005?'<span class="muted">—</span>':fmt(v);
+      return `<td class="num ${numCls} ${cls}">${display}</td>`;
+    }).join('');
+    if(r.type==='section') tableRows+=`<tr class="row-section"><td class="lbl" colspan="${periods.length+1}">${r.label}</td></tr>`;
+    else if(r.type==='total') tableRows+=`<tr class="row-total"><td class="lbl">${r.label}</td>${vals}</tr>`;
+    else if(r.type==='subtotal') tableRows+=`<tr class="row-subtotal"><td class="lbl">${r.label}</td>${vals}</tr>`;
+    else {
+      const hasVal=periods.some(p=>Math.abs(r.values?.[p]||0)>0.01);
+      if(!hasVal) return;
+      tableRows+=`<tr class="row-detail"><td class="lbl indent">${r.label}</td>${vals}</tr>`;
+    }
+  });
+  const ths=pLabels.map((l,i)=>`<th class="${periods[i]==='Total_2026'?'ytot':periods[i]==='Total_2025'?'ytot25':''}">${l}</th>`).join('');
+  const moPer=MONTHS;
+  const chartIn=moPer.map(p=>+g(_eco,'total_inflows',p).toFixed(1));
+  const chartOut=moPer.map(p=>+g(_eco,'total_outflows',p).toFixed(1));
+  const chartClose=moPer.map(p=>+g(_eco,'closing',p).toFixed(1));
+  const totalIn26=g(_eco,'total_inflows','Total_2026'),totalOut26=g(_eco,'total_outflows','Total_2026');
+  const net26=totalIn26-totalOut26,close26=g(_eco,'closing','Total_2026'),open26=g(_eco,'opening','Jan');
+  document.getElementById('mainContent').innerHTML=`
+    <div class="sec" style="border-left:4px solid ${color}">
+      <div class="entity-tabs">${entityTabs}</div>
+      <div class="info-row"><span style="font-weight:600;color:${color};font-size:13px">${COMPANIES[_eco].name}</span><span>·</span><span>Full monthly cash flow — Jan to Dec 2026</span><span>·</span><span>Jan–Mar = actual weekly totals · Apr–Dec = forecast</span>${close26<0?'<span class="warn-badge">&#9888; NEGATIVE CLOSING</span>':''}</div>
+      <div class="kpi-grid" style="margin-bottom:14px">
+        <div class="kpi green"><div class="kpi-label">Total inflows</div><div class="kpi-val pos" style="font-size:17px">${fmt(totalIn26)}</div></div>
+        <div class="kpi red"><div class="kpi-label">Total outflows</div><div class="kpi-val neg" style="font-size:17px">${fmt(totalOut26)}</div></div>
+        <div class="kpi ${net26>=0?'teal':'red'}"><div class="kpi-label">Net movement</div><div class="kpi-val ${net26>=0?'pos':'neg'}" style="font-size:17px">${fmt(net26)}</div></div>
+        <div class="kpi blue"><div class="kpi-label">Opening balance</div><div class="kpi-val" style="font-size:17px">${fmt(open26)}</div></div>
+        <div class="kpi gold"><div class="kpi-label">Closing balance</div><div class="kpi-val ${close26>=0?'':'neg'}" style="font-size:17px">${fmt(close26)}</div></div>
+      </div>
+      <div class="grid2" style="margin-bottom:16px">
+        <div><div class="sec-title">Monthly inflows vs outflows</div>
+          <div class="legend"><div class="leg"><div class="leg-dot" style="background:${color}"></div>Inflows</div><div class="leg"><div class="leg-dot" style="background:#B03A2E"></div>Outflows</div></div>
+          <div class="chart-wrap-sm"><canvas id="ec1" role="img" aria-label="Entity monthly inflows vs outflows"></canvas></div></div>
+        <div><div class="sec-title">Closing balance trajectory</div>
+          <div class="chart-wrap-sm"><canvas id="ec2" role="img" aria-label="Entity closing balance trend"></canvas></div></div>
+      </div>
+    </div>
+    <div class="sec"><div class="sec-title">&#9646; Detailed monthly cash flow — all line items</div>
+      <div class="scroll-x"><table class="detail-table"><thead><tr><th class="lbl">Line Item</th>${ths}</tr></thead><tbody>${tableRows}</tbody></table></div></div>`;
+  setTimeout(()=>{
+    const c1=document.getElementById('ec1');
+    if(c1)charts.ec1=new Chart(c1,{type:'bar',data:{labels:MONTHS,datasets:[{label:'Inflows',data:chartIn,backgroundColor:color+'30',borderColor:color,borderWidth:1.5},{label:'Outflows',data:chartOut,backgroundColor:'#B03A2E30',borderColor:'#B03A2E',borderWidth:1.5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:10},autoSkip:false,maxRotation:0}},y:{ticks:{callback:v=>fmtM(v),font:{size:9}},grid:{color:'#E8EBF2'}}}}});
+    const c2=document.getElementById('ec2');
+    if(c2)charts.ec2=new Chart(c2,{type:'line',data:{labels:MONTHS,datasets:[{label:'Closing',data:chartClose,borderColor:color,backgroundColor:color+'12',fill:true,tension:0.3,pointRadius:4,pointBackgroundColor:color}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:10}}},y:{ticks:{callback:v=>fmtM(v),font:{size:9}},grid:{color:'#E8EBF2'}}}}});
+  },60);
+}
+
+// ═══════════════════════════════════════════════════════
+//  WEEKLY DETAIL
+// ═══════════════════════════════════════════════════════
+function renderWeekly(){
+  if(!CO_KEYS.includes(_wco))_wco=CO_KEYS[0];
+  const color=COLORS[CO_KEYS.indexOf(_wco)];
+  const coTabsHtml=CO_KEYS.map((c,i)=>`<button class="co-tab${_wco===c?' active':''}" style="${_wco===c?'background:'+COLORS[i]+';border-color:'+COLORS[i]:''}" onclick="_wco='${c}';renderWeekly()">${COMPANIES[c].short}</button>`).join('');
+  const wkP=Object.keys(WEEK_COL_MAP);
+  const wkL=['W1 1-13','W2 14-20','W3 21-27','W4 28-31','JAN TOT','W1 1-10','W2 11-17','W3 18-24','W4 25-28','FEB TOT','W1 1-10','W2 11-17','W3 18-24','W4 25-31','MAR TOT'];
+  const rows=[{label:'Opening balance',met:'opening',cls:'row-total'},{label:'Total inflows',met:'total_inflows',cls:'row-subtotal'},{label:'Total outflows',met:'total_outflows',cls:'row-subtotal'},{label:'Net movement',met:'net',cls:'row-subtotal'},{label:'Closing balance',met:'closing',cls:'row-total'}];
+  const isTot=p=>p.includes('TOT');
+  const trs=rows.map(r=>{
+    const cells=wkP.map(p=>{const v=r.met==='net'?g(_wco,'total_inflows',p)-g(_wco,'total_outflows',p):g(_wco,r.met,p);return`<td class="num ${v<0?'neg':'pos'} ${isTot(p)?'ytot':''}">${fmt(v)}</td>`;}).join('');
+    return`<tr class="${r.cls}"><td class="lbl">${r.label}</td>${cells}</tr>`;
+  }).join('');
+  const ths=wkP.map((p,i)=>`<th class="${isTot(p)?'ytot':''}">${wkL[i]}</th>`).join('');
+  const chartIn=wkP.map(p=>+g(_wco,'total_inflows',p).toFixed(1));
+  const chartOut=wkP.map(p=>+g(_wco,'total_outflows',p).toFixed(1));
+  const chartClose=wkP.map(p=>+g(_wco,'closing',p).toFixed(1));
+  document.getElementById('mainContent').innerHTML=`
+    <div class="sec"><div class="sec-title">&#9646; Weekly cash flow — Jan to Mar 2026 (actual)</div>
+      <div class="co-tabs">${coTabsHtml}</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">${COMPANIES[_wco].name} · AED 000's</div>
+      <div class="scroll-x"><table class="detail-table"><thead><tr><th class="lbl">Description</th>${ths}</tr></thead><tbody>${trs}</tbody></table></div></div>
+    <div class="grid2">
+      <div class="sec"><div class="sec-title">&#9646; Weekly inflows vs outflows</div>
+        <div class="legend"><div class="leg"><div class="leg-dot" style="background:${color}"></div>Inflows</div><div class="leg"><div class="leg-dot" style="background:#B03A2E"></div>Outflows</div></div>
+        <div class="chart-wrap"><canvas id="wc1" role="img" aria-label="Weekly inflows vs outflows"></canvas></div></div>
+      <div class="sec"><div class="sec-title">&#9646; Weekly closing balance</div>
+        <div class="chart-wrap"><canvas id="wc2" role="img" aria-label="Weekly closing balance trend"></canvas></div></div>
+    </div>`;
+  setTimeout(()=>{
+    const c1=document.getElementById('wc1');
+    if(c1)charts.wc1=new Chart(c1,{type:'bar',data:{labels:wkL,datasets:[{label:'Inflows',data:chartIn,backgroundColor:color+'30',borderColor:color,borderWidth:1.5},{label:'Outflows',data:chartOut,backgroundColor:'#B03A2E30',borderColor:'#B03A2E',borderWidth:1.5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9},autoSkip:false,maxRotation:40}},y:{ticks:{callback:v=>fmtM(v),font:{size:9}},grid:{color:'#E8EBF2'}}}}});
+    const c2=document.getElementById('wc2');
+    if(c2)charts.wc2=new Chart(c2,{type:'line',data:{labels:wkL,datasets:[{label:'Closing',data:chartClose,borderColor:color,backgroundColor:color+'10',fill:true,tension:0.2,pointRadius:4,pointBackgroundColor:color}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9},autoSkip:false,maxRotation:40}},y:{ticks:{callback:v=>fmtM(v),font:{size:9}},grid:{color:'#E8EBF2'}}}}});
+  },60);
+}
+
+// ═══════════════════════════════════════════════════════
+//  MONTHLY SUMMARY
+// ═══════════════════════════════════════════════════════
+function renderMonthly(){
+  if(!CO_KEYS.includes(_mco))_mco=CO_KEYS[0];
+  const coTabsHtml=CO_KEYS.map((c,i)=>`<button class="co-tab${_mco===c?' active':''}" style="${_mco===c?'background:'+COLORS[i]+';border-color:'+COLORS[i]:''}" onclick="_mco='${c}';renderMonthly()">${COMPANIES[c].short}</button>`).join('');
+  const moPer=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Total_2026','Total_2025'];
+  const moLbl=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','2026 Total','2025 Total'];
+  const rows=[{label:'Opening balance',met:'opening',cls:'row-total'},{label:'Total inflows',met:'total_inflows',cls:'row-subtotal'},{label:'Total outflows',met:'total_outflows',cls:'row-subtotal'},{label:'Net movement',met:'net',cls:'row-subtotal'},{label:'Closing balance',met:'closing',cls:'row-total'}];
+  const trs=rows.map(r=>{
+    const cells=moPer.map((p,i)=>{const v=r.met==='net'?g(_mco,'total_inflows',p)-g(_mco,'total_outflows',p):g(_mco,r.met,p);const isT=p==='Total_2026',isY25=p==='Total_2025';return`<td class="num ${v<0?'neg':'pos'} ${isT?'ytot':isY25?'ytot25':''}">${fmt(v)}</td>`;}).join('');
+    return`<tr class="${r.cls}"><td class="lbl">${r.label}</td>${cells}</tr>`;
+  }).join('');
+  const ths=moLbl.map((l,i)=>`<th class="${moPer[i]==='Total_2026'?'ytot':moPer[i]==='Total_2025'?'ytot25':''}">${l}</th>`).join('');
+  document.getElementById('mainContent').innerHTML=`
+    <div class="sec"><div class="sec-title">&#9646; Monthly cash flow summary — 2026</div>
+      <div class="co-tabs">${coTabsHtml}</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">${COMPANIES[_mco].name} · AED 000's</div>
+      <div class="scroll-x"><table class="detail-table"><thead><tr><th class="lbl">Description</th>${ths}</tr></thead><tbody>${trs}</tbody></table></div></div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  GROUP VIEW
+// ═══════════════════════════════════════════════════════
+function renderGroup(){
+  const moPer=MONTHS;
+  const inByCoYear=CO_KEYS.map(co=>g(co,'total_inflows','Total_2026'));
+  const outByCoYear=CO_KEYS.map(co=>g(co,'total_outflows','Total_2026'));
+  const netByCo=inByCoYear.map((v,i)=>v-outByCoYear[i]);
+  const closByCoYear=CO_KEYS.map(co=>g(co,'closing','Total_2026'));
+  const gIn=inByCoYear.reduce((a,b)=>a+b,0),gOut=outByCoYear.reduce((a,b)=>a+b,0);
+  const coRows=CO_KEYS.map((co,i)=>`<tr class="row-detail"><td class="lbl"><span class="co-pill" style="background:${COLORS[i]}18;color:${COLORS[i]}">${COMPANIES[co].short}</span>&nbsp;${COMPANIES[co].name}</td><td class="num pos">${fmt(inByCoYear[i])}</td><td class="num neg">${fmt(outByCoYear[i])}</td><td class="num ${netByCo[i]>=0?'pos':'neg'}">${fmt(netByCo[i])}</td><td class="num ${closByCoYear[i]>=0?'pos':'neg'}">${fmt(closByCoYear[i])}</td><td><button class="entity-tab" style="font-size:10px;padding:2px 8px" onclick="goToEntity('${co}')">Detail &rarr;</button></td></tr>`).join('');
+  const stacked=CO_KEYS.map((co,i)=>({label:COMPANIES[co].short,data:moPer.map(p=>+Math.max(0,g(co,'total_inflows',p)).toFixed(1)),backgroundColor:COLORS[i]+'BB',borderColor:COLORS[i],borderWidth:1}));
+  const grpLeg=CO_KEYS.map((co,i)=>`<div class="grp-leg-row"><div class="grp-leg-dot" style="background:${COLORS[i]}"></div><div class="grp-leg-name">${COMPANIES[co].short} — ${COMPANIES[co].name}</div><div class="grp-leg-val">${fmt(inByCoYear[i])}</div></div>`).join('');
+  document.getElementById('mainContent').innerHTML=`
+    <div class="sec"><div class="sec-title">&#9646; Group consolidated — 2026 annual summary</div>
+      <div class="scroll-x"><table class="detail-table" style="min-width:500px"><thead><tr><th class="lbl">Company</th><th>Total inflows</th><th>Total outflows</th><th>Net movement</th><th>Closing balance</th><th>Detail</th></tr></thead>
+      <tbody>${coRows}<tr class="row-total"><td class="lbl">GROUP TOTAL</td><td class="num ytot">${fmt(gIn)}</td><td class="num ytot">${fmt(gOut)}</td><td class="num ytot ${(gIn-gOut)>=0?'pos':'neg'}">${fmt(gIn-gOut)}</td><td class="num ytot">${fmt(closByCoYear.reduce((a,b)=>a+b,0))}</td><td></td></tr></tbody></table></div></div>
+    <div class="grid2">
+      <div class="sec"><div class="sec-title">&#9646; Monthly inflows by company (stacked)</div>
+        <div class="chart-wrap"><canvas id="gc1" role="img" aria-label="Stacked monthly inflows"></canvas></div></div>
+      <div class="sec"><div class="sec-title">&#9646; 2026 inflow share</div>
+        <div class="chart-wrap-sm"><canvas id="gc2" role="img" aria-label="Inflow share doughnut"></canvas></div>
+        <div style="margin-top:10px">${grpLeg}</div></div>
+    </div>`;
+  setTimeout(()=>{
+    const c1=document.getElementById('gc1');
+    if(c1)charts.gc1=new Chart(c1,{type:'bar',data:{labels:MONTHS,datasets:stacked},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{stacked:true,ticks:{font:{size:10},autoSkip:false,maxRotation:0}},y:{stacked:true,ticks:{callback:v=>fmtM(v),font:{size:9}},grid:{color:'#E8EBF2'}}}}});
+    const c2=document.getElementById('gc2');
+    if(c2)charts.gc2=new Chart(c2,{type:'doughnut',data:{labels:CO_KEYS.map(c=>COMPANIES[c].short),datasets:[{data:inByCoYear.map(v=>+Math.max(0,v).toFixed(1)),backgroundColor:COLORS,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},cutout:'58%'}});
+  },60);
+}
+
+// ═══════════════════════════════════════════════════════
+//  EXPORT
+// ═══════════════════════════════════════════════════════
+function exportCSV(){
+  const periods=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Total_2026','Total_2025'];
+  let csv='Company,Section,Line Item,'+periods.join(',')+'\n';
+  CO_KEYS.forEach(co=>{
+    (DETAIL_DATA[co]||[]).forEach(r=>{
+      if(r.type==='section')return;
+      csv+=`${COMPANIES[co].name},${r.type},${r.label},${periods.map(p=>(r.values?.[p]||0).toFixed(2)).join(',')}\n`;
+    });
+  });
+  const b=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(b);
+  a.download='AlLaithGroup_CashFlow_Live.csv';
+  a.click();
+}
+
+// Auto-load if credentials saved
+window.addEventListener('load',()=>{
+  const key=localStorage.getItem('alg_api_key');
+  const sid=localStorage.getItem('alg_sheet_id');
+  if(key&&sid){ loadSavedConfig(); }
+});
+</script>
+</body>
+</html>
