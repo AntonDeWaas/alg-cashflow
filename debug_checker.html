@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>AL Laith — CSV Debug Checker</title>
+<style>
+body{font-family:monospace;padding:20px;background:#0D1B2A;color:#A0C4E8}
+h2{color:#64A8E8;margin-bottom:6px}
+.ok{color:#2ECC71}.err{color:#E74C3C}.warn{color:#F39C12}
+pre{background:#162334;padding:10px;border-radius:6px;overflow-x:auto;font-size:11px;line-height:1.7;max-height:300px;overflow-y:auto}
+button{background:#1A5E9E;color:#fff;border:none;padding:10px 22px;border-radius:6px;font-size:14px;cursor:pointer;margin:4px}
+button:hover{background:#2E7DC4}
+.section{margin-bottom:14px;border:1px solid #2E5B9E;border-radius:8px;padding:14px}
+textarea{width:100%;height:180px;background:#0A1520;color:#2ECC71;border:1px solid #2E5B9E;border-radius:4px;padding:8px;font-size:11px;font-family:monospace}
+select{background:#162334;color:#A0C4E8;border:1px solid #2E5B9E;border-radius:4px;padding:6px 10px;font-size:13px;margin-right:8px}
+</style>
+</head>
+<body>
+<h2>Al Laith Group — CSV Structure Checker</h2>
+<p style="color:#7A9AB0;margin-bottom:14px">Uses your published CSV URLs to map exact row/column positions.</p>
+
+<div class="section">
+  <label style="color:#7A9AB0;font-size:12px;display:block;margin-bottom:6px">Select tab:</label>
+  <select id="tabSel">
+    <option value="ALPS">ALPS-CB</option>
+    <option value="ALICLER">ALICLER-CB</option>
+    <option value="OMAN">Oman-CB</option>
+    <option value="SS">SS-CB</option>
+    <option value="KSA">Ksa-CB</option>
+    <option value="ALPS_BR">ALPS BR-CB</option>
+    <option value="ALPS_UZ">ALPS-UZ-CB</option>
+  </select>
+  <button onclick="runCheck()">&#9654; Run Check</button>
+  <button onclick="runAll()">&#9654;&#9654; Check All Tabs</button>
+</div>
+
+<div id="out"></div>
+
+<script>
+const CSV_URLS = {
+  ALPS:    'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=201022155&single=true&output=csv',
+  ALICLER: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=1424606901&single=true&output=csv',
+  OMAN:    'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=1881988227&single=true&output=csv',
+  SS:      'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=1126609662&single=true&output=csv',
+  KSA:     'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=1405193407&single=true&output=csv',
+  ALPS_BR: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=781070140&single=true&output=csv',
+  ALPS_UZ: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRy1TjYnEJ36l49q0oWFVfTjwfOfK74t45oXgoW2_7LZIPEry0HuXoevkm3dIYIMwiZMpUL_W4KR3Ei/pub?gid=1975420796&single=true&output=csv',
+};
+
+function parseCSV(text){
+  const rows=[];
+  for(const line of text.split('\n')){
+    const row=[];let cur='',inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"')inQ=!inQ;
+      else if(c===','&&!inQ){row.push(cur.trim());cur='';}
+      else cur+=c;
+    }
+    row.push(cur.trim());
+    rows.push(row);
+  }
+  return rows;
+}
+
+function colLetter(n){
+  let s='';n=n+1;
+  while(n>0){s=String.fromCharCode(65+(n-1)%26)+s;n=Math.floor((n-1)/26);}
+  return s;
+}
+
+function pn(v){
+  const n=parseFloat((v||'').toString().replace(/,/g,'').replace(/"/g,''));
+  return isNaN(n)?null:n;
+}
+
+async function checkTab(co){
+  const url = CSV_URLS[co];
+  let html = `<div class="section"><h3 style="color:#64A8E8;margin-bottom:8px">&#9654; ${co}</h3>`;
+  try {
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const text = await res.text();
+    const rows = parseCSV(text);
+    const maxCol = Math.max(...rows.slice(0,20).map(r=>r.length));
+
+    html += `<p class="ok">✓ OK — ${rows.length} rows × ${maxCol} cols</p>`;
+
+    // ── 1. Scan col A for key row labels ──
+    const KEYWORDS = ['opening','cash balance','total inflow','total outflow',
+      'closing','salaries','wages','rent','vat','tax','capex',
+      'advance','intercompany','supplier','debt','collect','borrowing',
+      'estimated cash','sub-total','subtotal'];
+    html += `<p class="warn" style="margin:8px 0 3px">Key rows (col A scan):</p><pre>`;
+    const keyRows = {};
+    for(let i=0;i<rows.length;i++){
+      const a=(rows[i][0]||'').trim();
+      if(a && KEYWORDS.some(k=>a.toLowerCase().includes(k))){
+        html += `Row ${String(i+1).padStart(4)}: "${a}"\n`;
+        keyRows[a.substring(0,40)] = i; // 0-based
+      }
+    }
+    html += `</pre>`;
+
+    // ── 2. Find date/week column headers ──
+    html += `<p class="warn" style="margin:8px 0 3px">Column headers (rows 1-10, non-empty cells, col 100+):</p><pre>`;
+    for(let r=0;r<10;r++){
+      for(let c=100;c<(rows[r]||[]).length;c++){
+        const v=(rows[r][c]||'').trim();
+        if(v) html += `R${r+1} C${c}(${colLetter(c)}): "${v}"\n`;
+      }
+    }
+    html += `</pre>`;
+
+    // ── 3. Show rows 9-35 last 30 cols (find numeric data) ──
+    html += `<p class="warn" style="margin:8px 0 3px">Rows 9-35, last 30 cols (numeric values):</p><pre>`;
+    const startC = Math.max(100, maxCol-35);
+    for(let r=8;r<35&&r<rows.length;r++){
+      const row=rows[r]||[];
+      let line=`R${String(r+1).padStart(3)}: `;
+      let hasVal=false;
+      for(let c=startC;c<row.length;c++){
+        const v=pn(row[c]);
+        if(v!==null&&Math.abs(v)>0.001){
+          line+=`${colLetter(c)}=${v}  `;
+          hasVal=true;
+        }
+      }
+      if(hasVal) html+=line+`  [label:"${(row[0]||'').substring(0,35)}"]\n`;
+    }
+    html += `</pre>`;
+
+    // ── 4. Build copy-paste summary ──
+    const lastCols = (rows[5]||[]).slice(-40);
+    const startIdx = (rows[5]||[]).length - 40;
+    const colHeaders = {};
+    for(let r=0;r<8;r++){
+      for(let c=startIdx;c<(rows[r]||[]).length;c++){
+        const v=(rows[r][c]||'').trim();
+        if(v && (v.match(/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|w\/e|week|total|2025|2026/i))){
+          colHeaders[colLetter(c)] = v;
+        }
+      }
+    }
+
+    const summary = {
+      co, totalRows:rows.length, totalCols:maxCol,
+      keyRowsFound: keyRows,
+      colHeadersFound: colHeaders,
+      row10_sample: (rows[9]||[]).slice(startIdx).map((v,i)=>`${colLetter(startIdx+i)}:${v}`).filter(x=>x.split(':')[1]).join(' | '),
+      row11_sample: (rows[10]||[]).slice(startIdx).map((v,i)=>`${colLetter(startIdx+i)}:${v}`).filter(x=>x.split(':')[1]).join(' | '),
+      row33_sample: (rows[32]||[]).slice(startIdx).map((v,i)=>`${colLetter(startIdx+i)}:${v}`).filter(x=>x.split(':')[1]).join(' | '),
+      row103_sample: (rows[102]||[]).slice(startIdx).map((v,i)=>`${colLetter(startIdx+i)}:${v}`).filter(x=>x.split(':')[1]).join(' | '),
+      row105_sample: (rows[104]||[]).slice(startIdx).map((v,i)=>`${colLetter(startIdx+i)}:${v}`).filter(x=>x.split(':')[1]).join(' | '),
+    };
+
+    html += `<p class="warn" style="margin:8px 0 3px">&#128203; COPY THIS AND PASTE TO CLAUDE:</p>
+<textarea>${JSON.stringify(summary,null,2)}</textarea>`;
+
+  } catch(e){
+    html += `<p class="err">✗ ${e.message}</p><p class="warn">Make sure this tab is published as CSV in File → Share → Publish to web</p>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+async function runCheck(){
+  const co = document.getElementById('tabSel').value;
+  document.getElementById('out').innerHTML='<p class="warn">Fetching...</p>';
+  document.getElementById('out').innerHTML = await checkTab(co);
+}
+
+async function runAll(){
+  document.getElementById('out').innerHTML='<p class="warn">Checking all 7 tabs...</p>';
+  let html='';
+  for(const co of Object.keys(CSV_URLS)){
+    document.getElementById('out').innerHTML = html + `<p class="warn">Checking ${co}...</p>`;
+    html += await checkTab(co);
+    document.getElementById('out').innerHTML = html;
+  }
+}
+</script>
+</body>
+</html>
