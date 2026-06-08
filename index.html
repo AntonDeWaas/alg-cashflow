@@ -649,7 +649,7 @@ function alpsFmt(n){
   return neg?'('+s+')':s;
 }
 function alpsValClass(n){ return Number(n)<0?'neg':(Number(n)>0?'pos':'muted'); }
-function forecastSheets(){ return [FORECAST_DATA.group, ...FORECAST_DATA.entities]; }
+function forecastSheets(){ return [FORECAST_DATA.group, ...(FORECAST_DATA.entities||[])].filter(Boolean); }
 function getForecast(){ return forecastSheets().find(x=>x.sheet===currentForecastSheet) || FORECAST_DATA.group; }
 function syncForecastSelectors(){
   const opts=forecastSheets().map(s=>`<option value="${escapeHtml(s.sheet)}" ${s.sheet===currentForecastSheet?'selected':''}>${escapeHtml(s.name)}</option>`).join('');
@@ -682,28 +682,34 @@ function renderAlpsSheet(){
   const mode=$('alpsViewMode')?$('alpsViewMode').value:'monthly';
   const search=($('alpsSearch')?$('alpsSearch').value:'').toLowerCase().trim();
   const d=getForecast();
-  const cols = mode==='weekly' ? d.periods.map((_,i)=>i) : d.periods.map((p,i)=>(p.period==='TOT'||p.month==='Total')?i:null).filter(i=>i!==null);
-  let rows=d.rows;
-  if(search) rows=rows.filter(r=>r.label.toLowerCase().includes(search)||r.type==='section');
+  if(!d || !Array.isArray(d.periods) || !Array.isArray(d.rows)){
+    $('alpsSheet').innerHTML='<div class="empty">Detailed weekly/monthly sheet lines are not available for this selection. Use a business unit sheet, or refresh from Google Sheet again.</div>';
+    return;
+  }
+  const cols = mode==='weekly' ? d.periods.map((_,i)=>i) : d.periods.map((p,i)=>(p.period==='TOT'||p.month==='Total'||p.period==='Total')?i:null).filter(i=>i!==null);
+  let rows=d.rows||[];
+  if(search) rows=rows.filter(r=>String(r.label||'').toLowerCase().includes(search)||r.type==='section');
   const top=`<tr><th rowspan="2">Cash flow line</th>${cols.map(i=>`<th>${escapeHtml(d.periods[i].month)}</th>`).join('')}</tr><tr>${cols.map(i=>`<th>${escapeHtml(d.periods[i].period||'')}</th>`).join('')}</tr>`;
   const body=rows.map(r=>{
     if(r.type==='section') return `<tr class="section"><td colspan="${cols.length+1}">${escapeHtml(r.label)}</td></tr>`;
-    return `<tr class="${r.type==='total'?'total':''}"><td class="rowhead">${escapeHtml(r.label)}</td>${cols.map(i=>`<td class="num ${alpsValClass(r.values[i])}">${alpsFmt(r.values[i])}</td>`).join('')}</tr>`;
+    const vals=Array.isArray(r.values)?r.values:[];
+    return `<tr class="${r.type==='total'?'total':''}"><td class="rowhead">${escapeHtml(r.label)}</td>${cols.map(i=>`<td class="num ${alpsValClass(vals[i])}">${alpsFmt(vals[i])}</td>`).join('')}</tr>`;
   }).join('');
   $('alpsSheet').innerHTML=`<table class="forecast-table"><thead>${top}</thead><tbody>${body}</tbody></table>`;
 }
 function exportAlpsCSV(){
   const d=getForecast();
+  if(!d || !Array.isArray(d.periods) || !Array.isArray(d.rows)){ alert('No detailed forecast lines are available to export for this selection.'); return; }
   const cols=d.periods.map((_,i)=>i);
   const lines=[];
   lines.push(['Cash flow line',...cols.map(i=>`${d.periods[i].month} ${d.periods[i].period}`.trim())].join(','));
-  d.rows.forEach(r=>lines.push([`"${String(r.label).replace(/"/g,'""')}"`,...cols.map(i=>r.values[i]??'')].join(',')));
+  d.rows.forEach(r=>lines.push([`"${String(r.label).replace(/"/g,'""')}"`,...cols.map(i=>(Array.isArray(r.values)?r.values[i]:'')??'')].join(',')));
   download(new Blob([lines.join('\n')],{type:'text/csv'}),`${d.sheet.toLowerCase().replace(/[^a-z0-9]+/g,'-')}-forecast-2026.csv`);
 }
 
 
 /* ---------------- Google Sheet connection defaults ---------------- */
-const DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/a/macros/allaith.com/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
+const DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
 const SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB'];
 
 /* ---------------- executive management features ---------------- */
@@ -820,7 +826,8 @@ function parseForecastSheet(name, matrix){
   return {sheet:name,name,title:name+' Cash Flow Forecast',company:'Al Laith Group',unit:"AED '000",periods,rows:parsedRows,monthlySummary};
 }
 function buildGroupFromEntities(entities){
-  const base=entities[0]||{monthlySummary:[]};
+  entities=Array.isArray(entities)?entities:[];
+  const base=entities[0]||{monthlySummary:[],periods:[],rows:[]};
   const monthlySummary=(base.monthlySummary||[]).map((m,idx)=>({
     month:m.month,period:m.period,
     opening:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.opening||0),0),
@@ -828,7 +835,17 @@ function buildGroupFromEntities(entities){
     outflows:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.outflows||0),0),
     closing:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.closing||0),0)
   }));
-  return {sheet:'GROUP',name:'Group Forecast',monthlySummary};
+  const periods=(base.periods||[]).map(p=>({...p}));
+  const labels=[]; const byLabel={};
+  entities.forEach(e=>(e.rows||[]).forEach(r=>{
+    const key=cleanText(r.label); if(!key) return;
+    if(!byLabel[key]){ labels.push(key); byLabel[key]={label:r.label,type:r.type,values:periods.map(()=>0)}; }
+    if(r.type==='section'){ byLabel[key].type='section'; return; }
+    (r.values||[]).forEach((v,i)=>{ if(v!==null&&v!==undefined&&!isNaN(Number(v))) byLabel[key].values[i]=(byLabel[key].values[i]||0)+Number(v); });
+    if(r.type==='total') byLabel[key].type='total';
+  }));
+  const rows=labels.map(k=>byLabel[k]);
+  return {sheet:'GROUP',name:'Group Forecast',title:'Consolidated Group Forecast',unit:"AED '000",periods,rows,monthlySummary};
 }
 function normalizeGooglePayload(json){
   if(json.entities&&json.group) return json;
@@ -857,6 +874,7 @@ async function refreshFromGoogleSheet(){
     const json=await loadJsonp(url);
     const normalized=normalizeGooglePayload(json);
     Object.assign(FORECAST_DATA, normalized);
+    if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)) currentForecastSheet='GROUP';
     setGoogleNotes('Updated from Google Sheet at '+new Date().toLocaleString());
     refreshAll();
   }
