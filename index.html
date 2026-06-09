@@ -480,7 +480,7 @@ function entityMonthly(entId){
       opening:Number(r.opening)||0,
       inflow:Number(r.inflows)||0,
       outflow:Number(r.outflows)||0,
-      closing:Number(r.closing)||0
+      closing:(r.closing!==undefined&&r.closing!==null&&!isNaN(Number(r.closing))&&Number(r.closing)!==0?Number(r.closing):((Number(r.opening)||0)+(Number(r.inflows)||0)-(Number(r.outflows)||0)))
     }));
     while(rows.length<12){ rows.push({month:MONTHS[rows.length],opening:0,inflow:0,outflow:0,closing:0}); }
     return {opening:rows[0]?.opening||0, rows:rows.slice(0,12)};
@@ -815,47 +815,76 @@ function detectMonthRow(matrix){
 function parseForecastSheet(name, matrix){
   const rows=matrix||[]; if(!rows.length) return null;
   let labelCol=0, anchorRow=-1;
-  rows.forEach((r,ri)=>r.forEach((c,ci)=>{ if(anchorRow<0 && /Estimated Cash Balance.*Beginning/i.test(cleanText(c))){ anchorRow=ri; labelCol=ci; }}));
+  rows.forEach((r,ri)=>r.forEach((c,ci)=>{ if(anchorRow<0 && /Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(cleanText(c))){ anchorRow=ri; labelCol=ci; }}));
   if(anchorRow<0){ rows.forEach((r,ri)=>r.forEach((c,ci)=>{ if(anchorRow<0 && /Total Inflows/i.test(cleanText(c))){ anchorRow=ri; labelCol=ci; }})); }
   if(anchorRow<0) labelCol=0;
   const monthRow=detectMonthRow(rows); const periodRow=monthRow>=0?monthRow+1:-1;
   const maxCols=Math.max(...rows.map(r=>r.length));
-  const monthNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Total'];
+  const months12=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthNames=[...months12,'Total'];
   let currentMonth=''; const periods=[];
   for(let c=labelCol+1;c<maxCols;c++){
     const mh=monthRow>=0?cleanText(rows[monthRow][c]):''; const ph=periodRow>=0?cleanText(rows[periodRow][c]):'';
-    const m3=mh.slice(0,3); if(monthNames.includes(m3)) currentMonth=m3; if(mh==='Total') currentMonth='Total';
-    const hasNumbers=rows.slice(anchorRow, anchorRow+80).some(r=>gsNumber(r[c])!==null);
-    if((currentMonth||ph||mh) && hasNumbers){ periods.push({col:c,month:currentMonth||mh||'',period:ph,key:((currentMonth||mh||'')+' '+ph).trim()}); }
+    const m3=mh.slice(0,3);
+    if(monthNames.includes(m3)) currentMonth=m3;
+    if(/^Total$/i.test(mh)) currentMonth='Total';
+    const hasNumbers=rows.slice(Math.max(0,anchorRow-2), anchorRow+90).some(r=>gsNumber(r[c])!==null);
+    if((currentMonth||ph||mh) && hasNumbers){ periods.push({col:c,month:currentMonth||mh||'',period:ph,key:((currentMonth||mh||'')+' '+ph).trim(),header:mh}); }
   }
   const parsedRows=[];
   rows.forEach((r,ri)=>{
     let label=cleanText(r[labelCol]);
-    if(!label){ for(let c=0;c<=Math.min(labelCol+2,r.length-1);c++){ const t=cleanText(r[c]); if(t && isNaN(Number(t.replace(/,/g,'')))){label=t;break;} } }
+    if(!label){ for(let c=0;c<=Math.min(labelCol+2,r.length-1);c++){ const t=cleanText(r[c]); if(t && isNaN(Number(String(t).replace(/,/g,'')))){label=t;break;} } }
     if(!label) return;
     const vals=periods.map(p=>gsNumber(r[p.col]));
     const hasVal=vals.some(v=>v!==null);
-    const type=!hasVal?'section':(/^Total\b|Estimated Cash Balance|Closing Balance|Net Movement/i.test(label)?'total':'line');
+    const type=!hasVal?'section':(/^Total\b|Estimated Cash\s*(Balance|Bal)|Closing Balance|Net Movement/i.test(label)?'total':'line');
     parsedRows.push({excelRow:ri+1,label,type,values:vals});
   });
   const getVals=(pattern)=>{ const r=parsedRows.find(x=>pattern.test(x.label)); return r?r.values:periods.map(()=>0); };
-  const opening=getVals(/Estimated Cash Balance.*Beginning|Opening Balance/i);
+  const opening=getVals(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
   const inflows=getVals(/Total Inflows/i);
   const outflows=getVals(/Total Outflows/i);
-  const closing=getVals(/Estimated Cash Balance.*End|Ending Cash Balance|Closing Balance/i);
-  const monthlySummary=periods.map((p,i)=>({month:p.month,period:p.period,opening:opening[i]||0,inflows:inflows[i]||0,outflows:outflows[i]||0,closing:closing[i]||0})).filter(x=>x.period==='TOT'||x.month==='Total'||x.period==='Total');
+  let closing=getVals(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
+  // If the sheet label changes or the closing row is blank, calculate period closing from opening + inflows - outflows.
+  closing=closing.map((v,i)=> (v!==null && v!==undefined && !isNaN(Number(v))) ? Number(v) : ((Number(opening[i])||0)+(Number(inflows[i])||0)-(Number(outflows[i])||0)) );
+
+  // Monthly summary should contain the final month total only. Weekly columns remain available in `periods` and `rows` for detailed views.
+  const monthlySummary=[];
+  months12.forEach(mon=>{
+    const idxs=periods.map((p,i)=>({p,i})).filter(x=>x.p.month===mon);
+    if(!idxs.length) return;
+    // Prefer the explicit TOT column. If missing, use the last column for that month.
+    let chosen=idxs.find(x=>/^TOT$/i.test(x.p.period));
+    if(!chosen) chosen=idxs[idxs.length-1];
+    const i=chosen.i;
+    monthlySummary.push({month:mon,period:chosen.p.period||'',opening:Number(opening[i])||0,inflows:Number(inflows[i])||0,outflows:Number(outflows[i])||0,closing:Number(closing[i])||0});
+  });
+  const yearOpening=monthlySummary[0]?.opening||0;
+  const yearInflows=monthlySummary.reduce((s,m)=>s+(Number(m.inflows)||0),0);
+  const yearOutflows=monthlySummary.reduce((s,m)=>s+(Number(m.outflows)||0),0);
+  const yearClosing=monthlySummary.length?Number(monthlySummary[monthlySummary.length-1].closing)||0:yearOpening+yearInflows-yearOutflows;
+  monthlySummary.push({month:'Year Total',period:'Total',opening:yearOpening,inflows:yearInflows,outflows:yearOutflows,closing:yearClosing});
   return {sheet:name,name,title:name+' Cash Flow Forecast',company:'Al Laith Group',unit:"AED '000",periods,rows:parsedRows,monthlySummary};
 }
 function buildGroupFromEntities(entities){
   entities=Array.isArray(entities)?entities:[];
-  const base=entities[0]||{monthlySummary:[],periods:[],rows:[]};
-  const monthlySummary=(base.monthlySummary||[]).map((m,idx)=>({
-    month:m.month,period:m.period,
-    opening:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.opening||0),0),
-    inflows:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.inflows||0),0),
-    outflows:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.outflows||0),0),
-    closing:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.closing||0),0)
+  const months12=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthlySummary=months12.map(mon=>({
+    month:mon, period:'TOT',
+    opening:entities.reduce((s,e)=>{ const r=(e.monthlySummary||[]).find(x=>x.month===mon)||{}; return s+(Number(r.opening)||0); },0),
+    inflows:entities.reduce((s,e)=>{ const r=(e.monthlySummary||[]).find(x=>x.month===mon)||{}; return s+(Number(r.inflows)||0); },0),
+    outflows:entities.reduce((s,e)=>{ const r=(e.monthlySummary||[]).find(x=>x.month===mon)||{}; return s+(Number(r.outflows)||0); },0),
+    closing:entities.reduce((s,e)=>{ const r=(e.monthlySummary||[]).find(x=>x.month===mon)||{}; return s+(Number(r.closing)||0); },0)
   }));
+  monthlySummary.push({
+    month:'Year Total', period:'Total',
+    opening:monthlySummary[0]?.opening||0,
+    inflows:monthlySummary.reduce((s,m)=>s+(Number(m.inflows)||0),0),
+    outflows:monthlySummary.reduce((s,m)=>s+(Number(m.outflows)||0),0),
+    closing:monthlySummary[monthlySummary.length-1]?.closing||0
+  });
+  const base=entities[0]||{periods:[],rows:[]};
   const periods=(base.periods||[]).map(p=>({...p}));
   const labels=[]; const byLabel={};
   entities.forEach(e=>(e.rows||[]).forEach(r=>{
