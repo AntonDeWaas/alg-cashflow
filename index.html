@@ -150,6 +150,10 @@
   .exec-hero h2{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:22px;margin:0 0 6px;font-weight:800}.exec-hero p{margin:0;color:#dbe6f8}.exec-actions{display:flex;gap:8px;flex-wrap:wrap}.exec-actions .btn{background:#fff;color:var(--alblue-2);border-color:#fff}.exec-actions .btn.ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.55)}
   .status-pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:800;font-size:11px;letter-spacing:.3px}.status-good{background:#eaf7f0;color:#087041;border:1px solid #b7e3ca}.status-watch{background:#fff6e4;color:#8a5600;border:1px solid #efd19d}.status-critical{background:#fdebea;color:#9f1d16;border:1px solid #f0b5b1}
   .alert-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.alert-card{padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff}.alert-card strong{display:block;font-size:14px}.alert-card .amt{font-family:Georgia,serif;font-size:20px;margin-top:4px}.threshold-input{width:100px;text-align:right}.report-only{display:none}
+  .exec-narrative{font-size:14px;line-height:1.65;color:var(--ink);max-width:980px}
+  .exec-narrative h3{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:var(--alblue-2);font-size:15px;margin:18px 0 8px;font-weight:800}
+  .exec-narrative p{margin:0 0 12px;white-space:pre-wrap}
+  .exec-narrative ol,.exec-narrative ul{margin:8px 0 14px 22px;padding:0}.exec-narrative li{margin:6px 0}
   @media(max-width:900px){.alert-grid{grid-template-columns:1fr}.brand-logo{height:46px}}
   @media print{nav.tabs,.topctl,.exec-actions,.btn,.toolbar,.forecast-tools{display:none!important}body{background:#fff}.view{display:block!important}.view:not(#view-executive){display:none!important}.card,.exec-hero{box-shadow:none}.report-only{display:block}.exec-hero{color:#111;background:#fff;border:1px solid #ddd}}
 
@@ -233,6 +237,11 @@
     <div class="grid kpis" id="execKpis"></div>
 
     <div class="card panel">
+      <div class="panelhead"><h2>Executive management commentary</h2><span class="tag">From Exe Sum tab / AI-style narrative</span></div>
+      <div id="execNarrative" class="exec-narrative"><div class="empty">Refresh Google Sheet to load the Executive Summary commentary from the Exe Sum tab.</div></div>
+    </div>
+
+    <div class="card panel">
       <div class="panelhead"><h2>Funding requirements alert</h2><span class="tag">Based on minimum cash thresholds</span></div>
       <div id="fundingAlerts" class="alert-grid"></div>
     </div>
@@ -306,6 +315,18 @@
         <button class="btn ghost sm" id="entityCSV">Export CSV</button>
       </div>
       <div class="tablewrap" id="entitySummary"></div>
+    </div>
+    <div class="card panel">
+      <div class="panelhead"><h2 id="entityCashPositionTitle">Weekly / monthly cash position</h2><span class="tag">From Google Sheet</span></div>
+      <div class="widewrap" id="entityCashPosition"></div>
+    </div>
+    <div class="card panel">
+      <div class="panelhead"><h2 id="entityInflowsTitle">Detailed inflows</h2><span class="tag">Same lines as Google Sheet</span></div>
+      <div class="widewrap" id="entityInflowsDetail"></div>
+    </div>
+    <div class="card panel">
+      <div class="panelhead"><h2 id="entityOutflowsTitle">Detailed outflows</h2><span class="tag">Same lines as Google Sheet</span></div>
+      <div class="widewrap" id="entityOutflowsDetail"></div>
     </div>
     <div class="card panel">
       <div class="panelhead"><h2>Transactions for this unit</h2>
@@ -745,6 +766,89 @@ function ensureMgmtDefaults(){
   ['googleSheetUrl','googleSheetUrlSettings'].forEach(id=>{ if($(id) && !$(id).value) $(id).value=saved; });
   localStorage.setItem('cf_google_sheet_url', saved);
 }
+
+function parseExeSummary(matrix){
+  const rows=Array.isArray(matrix)?matrix:[];
+  const blocks=[];
+  rows.forEach(r=>{
+    const cells=(Array.isArray(r)?r:[]).map(c=>cleanText(c)).filter(Boolean);
+    if(!cells.length) return;
+    const first=cells[0];
+    const text=cells.length>1 ? cells.join(' ') : first;
+    blocks.push(text);
+  });
+  return blocks;
+}
+function renderExeSummaryBlocks(blocks){
+  if(!$('execNarrative')) return;
+  if(!Array.isArray(blocks) || !blocks.length){
+    $('execNarrative').innerHTML='<div class="empty">No Executive Summary text was found in the Exe Sum tab.</div>';
+    return;
+  }
+  const sectionTitles=new Set(['Executive Summary','Cash Preservation and Cost Optimization Measures','Items Under Review','Key financial priorities in such a scenario would include:','Other fixed payments','Dividend','-Proposed Dividend Distribution and GCI Fee Settlement']);
+  let html='';
+  blocks.forEach((b,idx)=>{
+    const t=String(b||'').trim(); if(!t) return;
+    const isNum=/^\d+\s+/.test(t);
+    const isBullet=/^(Accelerating|Deferring|Negotiating|Following Actions)/i.test(t);
+    if(idx===0 || sectionTitles.has(t) || (!isNum && t.length<90 && /Measures|Review|Dividend|Summary|payments|priorities|Actions/i.test(t))){
+      html+=`<h3>${escapeHtml(t)}</h3>`;
+    }else if(isNum){
+      html+=`<p style="margin-left:14px"><strong>${escapeHtml(t.slice(0,1))}.</strong> ${escapeHtml(t.slice(1).trim())}</p>`;
+    }else if(isBullet){
+      html+=`<p style="margin-left:18px">• ${escapeHtml(t)}</p>`;
+    }else{
+      html+=`<p>${escapeHtml(t)}</p>`;
+    }
+  });
+  $('execNarrative').innerHTML=html || '<div class="empty">No Executive Summary text was found in the Exe Sum tab.</div>';
+}
+function periodHeaderHTML(periods, cols){
+  return `<tr><th rowspan="2">Cash flow line</th>${cols.map(i=>`<th>${escapeHtml(periods[i]?.month||'')}</th>`).join('')}</tr><tr>${cols.map(i=>`<th>${escapeHtml(periods[i]?.period||periods[i]?.header||'')}</th>`).join('')}</tr>`;
+}
+function rowValuesHTML(row, cols){
+  const vals=Array.isArray(row.values)?row.values:[];
+  return cols.map(i=>`<td class="num ${alpsValClass(vals[i])}">${alpsFmt(vals[i])}</td>`).join('');
+}
+function filterRowsBetween(rows, startRegex, endRegex){
+  const out=[]; let active=false;
+  (rows||[]).forEach(r=>{
+    const label=String(r.label||'');
+    if(startRegex.test(label)){ active=true; out.push(r); return; }
+    if(active){ out.push(r); if(endRegex && endRegex.test(label)) active=false; }
+  });
+  return out.filter(r=>r && r.label);
+}
+function renderDetailTable(targetId, sheet, rows){
+  if(!$(targetId)) return;
+  if(!sheet || !Array.isArray(sheet.periods) || !Array.isArray(rows) || !rows.length){
+    $(targetId).innerHTML='<div class="empty">No detailed Google Sheet lines available for this section.</div>'; return;
+  }
+  const cols=sheet.periods.map((_,i)=>i);
+  const body=rows.map(r=>{
+    if(r.type==='section') return `<tr class="section"><td colspan="${cols.length+1}">${escapeHtml(r.label)}</td></tr>`;
+    return `<tr class="${r.type==='total'?'total':''}"><td class="rowhead">${escapeHtml(r.label)}</td>${rowValuesHTML(r,cols)}</tr>`;
+  }).join('');
+  $(targetId).innerHTML=`<table class="forecast-table"><thead>${periodHeaderHTML(sheet.periods,cols)}</thead><tbody>${body}</tbody></table>`;
+}
+function renderBusinessUnitDetails(entId){
+  const ent=D.entities.find(e=>e.id===entId);
+  const sheet=forecastEntityForId(entId);
+  if($('entityCashPositionTitle')) $('entityCashPositionTitle').textContent=(ent?ent.name:'Business unit')+' — weekly / monthly cash position';
+  if($('entityInflowsTitle')) $('entityInflowsTitle').textContent=(ent?ent.name:'Business unit')+' — detailed inflows';
+  if($('entityOutflowsTitle')) $('entityOutflowsTitle').textContent=(ent?ent.name:'Business unit')+' — detailed outflows';
+  if(!sheet){
+    ['entityCashPosition','entityInflowsDetail','entityOutflowsDetail'].forEach(id=>{ if($(id)) $(id).innerHTML='<div class="empty">Refresh from Google Sheet to load detailed business unit lines.</div>'; });
+    return;
+  }
+  const cashRows=(sheet.rows||[]).filter(r=>/Estimated Cash\s*(Balance|Bal).*Beginning|Total Inflows|Total Outflows|Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Closing Balance/i.test(r.label));
+  const inflowRows=filterRowsBetween(sheet.rows,/Estimated Cash Inflows/i,/Total Inflows/i);
+  const outflowRows=filterRowsBetween(sheet.rows,/Estimated Cash Outflows/i,/Total Outflows/i);
+  renderDetailTable('entityCashPosition',sheet,cashRows);
+  renderDetailTable('entityInflowsDetail',sheet,inflowRows);
+  renderDetailTable('entityOutflowsDetail',sheet,outflowRows);
+}
+
 function renderExecutiveSummary(){
   if(!$('execKpis')) return; ensureMgmtDefaults(); syncVarianceSelectors();
   const g=FORECAST_DATA.group, months=monthsOnly(g.monthlySummary), year=g.monthlySummary.find(x=>x.month==='Year Total')||{};
@@ -754,6 +858,7 @@ function renderExecutiveSummary(){
   $('execKpis').innerHTML=[
     ['Opening Cash',alpsFmt(first.opening),'Start of forecast',''],['Closing Cash',alpsFmt(last.closing),'End of forecast',alpsValClass(last.closing)],['Total Collections',alpsFmt(year.inflows),'Forecast inflows','pos'],['Total Payments',alpsFmt(year.outflows),'Forecast outflows','neg'],['Net Movement',alpsFmt(net),'Inflows less outflows',alpsValClass(net)],['Funding Gap',alpsFmt(calcFundingGap()),'Threshold shortfall','neg']
   ].map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
+  renderExeSummaryBlocks(FORECAST_DATA.exeSummary || []);
   renderFundingAlerts(); renderThresholdTable(); renderVarianceTable();
 }
 function calcFundingGap(){
@@ -902,7 +1007,7 @@ function normalizeGooglePayload(json){
   const sheets=json.sheets||json; const entities=[];
   SHEET_IMPORT_NAMES.forEach(name=>{ if(Array.isArray(sheets[name])){ const parsed=parseForecastSheet(name,sheets[name]); if(parsed) entities.push(parsed); } });
   if(!entities.length) throw new Error('No recognised business unit sheets were found in the API response.');
-  return {asOf:(json.lastUpdated?new Date(json.lastUpdated).toLocaleString():'Google Sheet'),entities,group:buildGroupFromEntities(entities)};
+  return {asOf:(json.lastUpdated?new Date(json.lastUpdated).toLocaleString():'Google Sheet'),entities,group:buildGroupFromEntities(entities),exeSummary:parseExeSummary(sheets['Exe Sum']||sheets['EXE SUM']||[])};
 }
 function loadJsonp(url){
   return new Promise((resolve,reject)=>{
@@ -950,6 +1055,7 @@ function renderEntity(){
     <div><span class="s-lbl">Net</span><span class="s-val num ${cls(inS-outS)}">${fmt(inS-outS)}</span></div>
     <div><span class="s-lbl">Closing</span><span class="s-val num ${cls(close)}">${fmt(close)}</span></div>`;
   $('entitySummary').innerHTML=summaryTable(em.rows, em.opening);
+  renderBusinessUnitDetails(curEntity);
   // entity ledger
   const tx=D.transactions.filter(t=>t.entityId===curEntity && mKey(t.date).startsWith(''+D.year)).sort((a,b)=>a.date<b.date?1:-1);
   $('entityLedger').innerHTML=ledgerTableHTML(tx);
