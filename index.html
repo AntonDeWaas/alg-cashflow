@@ -561,7 +561,7 @@ function summaryTable(months, opening){
     ${r('Total inflows', months.map(m=>m.inflow), inTot,'pos')}
     ${r('Total outflows', months.map(m=>m.outflow), outTot,'neg')}
     </tbody><tfoot>
-    ${r('Closing balance', months.map(m=>m.closing), months[11].closing)}
+    ${r('Closing balance', months.map(m=>m.closing), (months[11]||months[months.length-1]||{}).closing)}
     </tfoot></table>`;
 }
 
@@ -659,7 +659,7 @@ function setForecastSheet(v){ currentForecastSheet=v; syncForecastSelectors(); r
 function renderAlpsCB(){
   if(!$('alpsKpis')) return;
   syncForecastSelectors();
-  const d=getForecast(), months=d.monthlySummary.filter(x=>x.month!=='Year Total');
+  const d=getForecast(), months=(d.monthlySummary||[]).filter(x=>x.month!=='Year Total');
   const year=d.monthlySummary.find(x=>x.month==='Year Total')||months[months.length-1];
   const last=months[months.length-1]||year;
   $('alpsSub').textContent=`${d.name} · ${d.title} · ${d.unit}`;
@@ -726,7 +726,7 @@ function ensureMgmtDefaults(){
 }
 function renderExecutiveSummary(){
   if(!$('execKpis')) return; ensureMgmtDefaults(); syncVarianceSelectors();
-  const g=FORECAST_DATA.group, months=monthsOnly(g.monthlySummary), year=g.monthlySummary.find(x=>x.month==='Year Total')||{};
+  const g=FORECAST_DATA.group||{monthlySummary:[]}, months=monthsOnly(g.monthlySummary), year=(g.monthlySummary||[]).find(x=>x.month==='Year Total')||{};
   const first=months[0]||{}, last=months[months.length-1]||{};
   const net=(Number(year.inflows)||0)-(Number(year.outflows)||0);
   $('execAsOf').textContent=`As of ${FORECAST_DATA.asOf||'latest upload'} · figures in AED '000`;
@@ -776,7 +776,19 @@ function exportForecastExcel(){
   forecastSheets().forEach(s=>monthsOnly(s.monthlySummary).forEach(r=>{html+=`<tr><td>${s.name}</td><td>${r.month}</td><td>${r.opening}</td><td>${r.inflows}</td><td>${r.outflows}</td><td>${r.closing}</td></tr>`;}));
   table.innerHTML=html; download(new Blob(['<html><body>'+table.outerHTML+'</body></html>'],{type:'application/vnd.ms-excel'}),'al-laith-group-cash-flow-forecast.xls');
 }
-function getGoogleSheetUrlInput(){ return (($('googleSheetUrlSettings')&&$('googleSheetUrlSettings').value) || ($('googleSheetUrl')&&$('googleSheetUrl').value) || localStorage.getItem('cf_google_sheet_url') || DEFAULT_GOOGLE_SHEET_URL || '').trim(); }
+function normalizeAppsScriptUrl(url){
+  // GitHub Pages should use the public Apps Script web-app endpoint.
+  // If a Workspace URL is pasted, convert it automatically.
+  return String(url||'').trim()
+    .replace('https://script.google.com/a/macros/allaith.com/s/','https://script.google.com/macros/s/')
+    .replace(/\?.*$/,'');
+}
+function getGoogleSheetUrlInput(){
+  const raw=(($('googleSheetUrlSettings')&&$('googleSheetUrlSettings').value) || ($('googleSheetUrl')&&$('googleSheetUrl').value) || localStorage.getItem('cf_google_sheet_url') || DEFAULT_GOOGLE_SHEET_URL || '').trim();
+  const v=normalizeAppsScriptUrl(raw);
+  ['googleSheetUrl','googleSheetUrlSettings'].forEach(id=>{ if($(id)) $(id).value=v; });
+  return v;
+}
 function setGoogleNotes(msg){ ['googleSheetNote','googleSheetNoteSettings'].forEach(id=>{ if($(id)) $(id).textContent=msg; }); }
 function saveGoogleSheetUrl(){
   const v=getGoogleSheetUrlInput(); localStorage.setItem('cf_google_sheet_url',v);
@@ -823,6 +835,12 @@ function parseForecastSheet(name, matrix){
   const outflows=getVals(/Total Outflows/i);
   const closing=getVals(/Estimated Cash Balance.*End|Ending Cash Balance|Closing Balance/i);
   const monthlySummary=periods.map((p,i)=>({month:p.month,period:p.period,opening:opening[i]||0,inflows:inflows[i]||0,outflows:outflows[i]||0,closing:closing[i]||0})).filter(x=>x.period==='TOT'||x.month==='Total'||x.period==='Total');
+  if(monthlySummary.length){
+    const first=monthlySummary[0], last=monthlySummary[monthlySummary.length-1];
+    const totalInflows=monthlySummary.reduce((a,m)=>a+(Number(m.inflows)||0),0);
+    const totalOutflows=monthlySummary.reduce((a,m)=>a+(Number(m.outflows)||0),0);
+    if(!monthlySummary.some(m=>m.month==='Year Total')) monthlySummary.push({month:'Year Total',period:'',opening:Number(first.opening)||0,inflows:totalInflows,outflows:totalOutflows,closing:Number(last.closing)||0});
+  }
   return {sheet:name,name,title:name+' Cash Flow Forecast',company:'Al Laith Group',unit:"AED '000",periods,rows:parsedRows,monthlySummary};
 }
 function buildGroupFromEntities(entities){
@@ -875,10 +893,15 @@ async function refreshFromGoogleSheet(){
     const normalized=normalizeGooglePayload(json);
     Object.assign(FORECAST_DATA, normalized);
     if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)) currentForecastSheet='GROUP';
-    setGoogleNotes('Updated from Google Sheet at '+new Date().toLocaleString());
+    setGoogleNotes('Updated from Google Sheet at '+new Date().toLocaleString()+'. Business units loaded: '+(FORECAST_DATA.entities||[]).length);
     refreshAll();
+    alert('Google Sheet data loaded successfully. Business units loaded: '+(FORECAST_DATA.entities||[]).length);
   }
-  catch(e){ setGoogleNotes('Refresh failed: '+e.message); alert('Could not refresh from Google Sheet: '+e.message); }
+  catch(e){
+    console.error('Google Sheet refresh failed', e);
+    setGoogleNotes('Refresh failed: '+e.message);
+    alert('Could not refresh from Google Sheet: '+e.message);
+  }
 }
 function handleExcelImport(e){ alert('Excel import button is ready in the UI. For reliable live updates from GitHub, use the Google Apps Script JSON connection so the hosted HTML can refresh from your Google Sheet.'); e.target.value=''; }
 
