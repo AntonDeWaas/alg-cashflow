@@ -153,13 +153,6 @@
   @media(max-width:900px){.alert-grid{grid-template-columns:1fr}.brand-logo{height:46px}}
   @media print{nav.tabs,.topctl,.exec-actions,.btn,.toolbar,.forecast-tools{display:none!important}body{background:#fff}.view{display:block!important}.view:not(#view-executive){display:none!important}.card,.exec-hero{box-shadow:none}.report-only{display:block}.exec-hero{color:#111;background:#fff;border:1px solid #ddd}}
 
-  .weeklywrap{overflow:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--paper-2);box-shadow:var(--shadow);margin-top:14px}
-  .weekly-table th,.weekly-table td{font-size:12px;padding:7px 8px;text-align:right}
-  .weekly-table th:first-child,.weekly-table td:first-child{text-align:left;position:sticky;left:0;background:var(--paper-2);z-index:1}
-  .weekly-table thead th{background:#fbf9f3}
-  .weekly-table .forecast-col{background:#fff8e8}
-  .weekly-table .total-col{font-weight:700;background:#fbf4e5}
-
 </style>
 
 <header class="app">
@@ -472,7 +465,28 @@ function monthsOf(){ return MONTHS.map((m,i)=>D.year+'-'+String(i+1).padStart(2,
 function mKey(d){ return (d||'').slice(0,7); }
 
 /* compute monthly opening/inflow/outflow/closing for an entity in selected year */
+function forecastEntityForId(entId){
+  const ent=D.entities.find(e=>e.id===entId);
+  if(!ent || typeof FORECAST_DATA==='undefined' || !Array.isArray(FORECAST_DATA.entities)) return null;
+  const target=String(ent.name||'').toLowerCase().replace(/\s+/g,'').replace(/oman-cb/,'oman-cb').replace(/ksa-cb/,'ksa-cb');
+  return FORECAST_DATA.entities.find(f=>String(f.sheet||f.name||'').toLowerCase().replace(/\s+/g,'')===target) || null;
+}
 function entityMonthly(entId){
+  // Prefer live Google Sheet / forecast data for the By Business Unit tab.
+  const fEnt=forecastEntityForId(entId);
+  if(fEnt && Array.isArray(fEnt.monthlySummary) && fEnt.monthlySummary.length){
+    const rows=monthsOnly(fEnt.monthlySummary).map(r=>({
+      month:r.month,
+      opening:Number(r.opening)||0,
+      inflow:Number(r.inflows)||0,
+      outflow:Number(r.outflows)||0,
+      closing:Number(r.closing)||0
+    }));
+    while(rows.length<12){ rows.push({month:MONTHS[rows.length],opening:0,inflow:0,outflow:0,closing:0}); }
+    return {opening:rows[0]?.opening||0, rows:rows.slice(0,12)};
+  }
+
+  // Fallback to manually entered transaction ledger.
   const ent=D.entities.find(e=>e.id===entId);
   const open=ent? (+ent.opening||0):0;
   const months=monthsOf();
@@ -696,7 +710,7 @@ function renderAlpsSheet(){
   const cols = mode==='weekly' ? d.periods.map((_,i)=>i) : d.periods.map((p,i)=>(p.period==='TOT'||p.month==='Total'||p.period==='Total')?i:null).filter(i=>i!==null);
   let rows=d.rows||[];
   if(search) rows=rows.filter(r=>String(r.label||'').toLowerCase().includes(search)||r.type==='section');
-  const top=`<tr><th rowspan="2">Cash flow line</th>${cols.map(i=>`<th>${escapeHtml(d.periods[i].month)}</th>`).join('')}</tr><tr>${cols.map(i=>`<th>${escapeHtml(d.periods[i].period||'')}${d.periods[i].subPeriod?' · '+escapeHtml(d.periods[i].subPeriod):''}</th>`).join('')}</tr>`;
+  const top=`<tr><th rowspan="2">Cash flow line</th>${cols.map(i=>`<th>${escapeHtml(d.periods[i].month)}</th>`).join('')}</tr><tr>${cols.map(i=>`<th>${escapeHtml(d.periods[i].period||'')}</th>`).join('')}</tr>`;
   const body=rows.map(r=>{
     if(r.type==='section') return `<tr class="section"><td colspan="${cols.length+1}">${escapeHtml(r.label)}</td></tr>`;
     const vals=Array.isArray(r.values)?r.values:[];
@@ -801,7 +815,7 @@ function detectMonthRow(matrix){
 function parseForecastSheet(name, matrix){
   const rows=matrix||[]; if(!rows.length) return null;
   let labelCol=0, anchorRow=-1;
-  rows.forEach((r,ri)=>r.forEach((c,ci)=>{ if(anchorRow<0 && /Estimated Cash Balance.*Beginning|Estimated Cash Balance\s*At\s*The\s*Beginning/i.test(cleanText(c))){ anchorRow=ri; labelCol=ci; }}));
+  rows.forEach((r,ri)=>r.forEach((c,ci)=>{ if(anchorRow<0 && /Estimated Cash Balance.*Beginning/i.test(cleanText(c))){ anchorRow=ri; labelCol=ci; }}));
   if(anchorRow<0){ rows.forEach((r,ri)=>r.forEach((c,ci)=>{ if(anchorRow<0 && /Total Inflows/i.test(cleanText(c))){ anchorRow=ri; labelCol=ci; }})); }
   if(anchorRow<0) labelCol=0;
   const monthRow=detectMonthRow(rows); const periodRow=monthRow>=0?monthRow+1:-1;
@@ -809,35 +823,10 @@ function parseForecastSheet(name, matrix){
   const monthNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Total'];
   let currentMonth=''; const periods=[];
   for(let c=labelCol+1;c<maxCols;c++){
-    const mh=monthRow>=0?cleanText(rows[monthRow][c]):'';
-    const phRaw=periodRow>=0?cleanText(rows[periodRow][c]):'';
-    const m3=mh.slice(0,3);
-    if(monthNames.includes(m3)) currentMonth=m3;
-    if(mh==='Total') currentMonth='Total';
-
-    let period=phRaw;
-    let subPeriod='';
-    // Flexible weekly structure: Jun W1 / Jun W2 / ... and optional W5.
-    // The row below usually contains the date range (1-9, 10-16, etc.).
-    const weekMatch = mh.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*W\s*(\d+)/i);
-    if(weekMatch){
-      currentMonth=weekMatch[1].slice(0,3);
-      period='W'+weekMatch[2];
-      subPeriod=phRaw;
-    }
-    const forecastMatch = mh.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:-\d{2,4})?$/i);
-    if(forecastMatch && /Forecast/i.test(phRaw)){
-      currentMonth=forecastMatch[1].slice(0,3);
-      period='Forecast';
-    }
-    if(forecastMatch && /^TOT$/i.test(phRaw)){
-      currentMonth=forecastMatch[1].slice(0,3);
-      period='TOT';
-    }
-    const hasNumbers=rows.slice(Math.max(0,anchorRow), Math.min(rows.length, anchorRow+100)).some(r=>gsNumber(r[c])!==null);
-    if((currentMonth||period||mh) && hasNumbers){
-      periods.push({col:c,month:currentMonth||mh||'',period:period,key:((currentMonth||mh||'')+' '+period).trim(),subPeriod});
-    }
+    const mh=monthRow>=0?cleanText(rows[monthRow][c]):''; const ph=periodRow>=0?cleanText(rows[periodRow][c]):'';
+    const m3=mh.slice(0,3); if(monthNames.includes(m3)) currentMonth=m3; if(mh==='Total') currentMonth='Total';
+    const hasNumbers=rows.slice(anchorRow, anchorRow+80).some(r=>gsNumber(r[c])!==null);
+    if((currentMonth||ph||mh) && hasNumbers){ periods.push({col:c,month:currentMonth||mh||'',period:ph,key:((currentMonth||mh||'')+' '+ph).trim()}); }
   }
   const parsedRows=[];
   rows.forEach((r,ri)=>{
@@ -846,41 +835,20 @@ function parseForecastSheet(name, matrix){
     if(!label) return;
     const vals=periods.map(p=>gsNumber(r[p.col]));
     const hasVal=vals.some(v=>v!==null);
-    const type=!hasVal?'section':(/^Total\b|Estimated Cash Balance|Estimated Cash Bal|Closing Balance|Net Movement/i.test(label)?'total':'line');
+    const type=!hasVal?'section':(/^Total\b|Estimated Cash Balance|Closing Balance|Net Movement/i.test(label)?'total':'line');
     parsedRows.push({excelRow:ri+1,label,type,values:vals});
   });
   const getVals=(pattern)=>{ const r=parsedRows.find(x=>pattern.test(x.label)); return r?r.values:periods.map(()=>0); };
-  const opening=getVals(/Estimated Cash Balance.*Beginning|Estimated Cash Balance\s*At\s*The\s*Beginning|Opening Balance/i);
+  const opening=getVals(/Estimated Cash Balance.*Beginning|Opening Balance/i);
   const inflows=getVals(/Total Inflows/i);
   const outflows=getVals(/Total Outflows/i);
-  const closing=getVals(/Estimated Cash Bal.*End|Estimated Cash Balance.*End|Cash Bal.*End|Ending Cash Balance|Closing Balance/i);
-
-  const monthlySummary=periods.map((p,i)=>({month:p.month,period:p.period,opening:opening[i]||0,inflows:inflows[i]||0,outflows:outflows[i]||0,closing:closing[i]||0}))
-    .filter(x=>x.period==='TOT'||x.month==='Total'||x.period==='Total');
-
-  const weeklyMonthSummary=[];
-  const months=[...new Set(periods.map(p=>p.month).filter(m=>monthNames.includes(m)&&m!=='Total'))];
-  months.forEach(m=>{
-    const idxs=periods.map((p,i)=>p.month===m?i:null).filter(i=>i!==null);
-    const hasWeekly=idxs.some(i=>/^W\d+$/i.test(periods[i].period));
-    if(!hasWeekly) return;
-    const get=(periodName, arr)=>{ const i=idxs.find(j=>String(periods[j].period).toUpperCase()===periodName.toUpperCase()); return i===undefined?null:(arr[i]||0); };
-    const weeks=[];
-    idxs.filter(i=>/^W\d+$/i.test(periods[i].period)).sort((a,b)=>Number(periods[a].period.slice(1))-Number(periods[b].period.slice(1))).forEach(i=>{
-      weeks.push({label:periods[i].period,range:periods[i].subPeriod||'',opening:opening[i]||0,inflows:inflows[i]||0,outflows:outflows[i]||0,closing:closing[i]||0});
-    });
-    weeklyMonthSummary.push({
-      month:m,
-      weeks,
-      forecast:{opening:get('Forecast',opening),inflows:get('Forecast',inflows),outflows:get('Forecast',outflows),closing:get('Forecast',closing)},
-      total:{opening:get('TOT',opening),inflows:get('TOT',inflows),outflows:get('TOT',outflows),closing:get('TOT',closing)}
-    });
-  });
-  return {sheet:name,name,title:name+' Cash Flow Forecast',company:'Al Laith Group',unit:"AED '000",periods,rows:parsedRows,monthlySummary,weeklyMonthSummary};
+  const closing=getVals(/Estimated Cash Balance.*End|Ending Cash Balance|Closing Balance/i);
+  const monthlySummary=periods.map((p,i)=>({month:p.month,period:p.period,opening:opening[i]||0,inflows:inflows[i]||0,outflows:outflows[i]||0,closing:closing[i]||0})).filter(x=>x.period==='TOT'||x.month==='Total'||x.period==='Total');
+  return {sheet:name,name,title:name+' Cash Flow Forecast',company:'Al Laith Group',unit:"AED '000",periods,rows:parsedRows,monthlySummary};
 }
 function buildGroupFromEntities(entities){
   entities=Array.isArray(entities)?entities:[];
-  const base=entities[0]||{monthlySummary:[],periods:[],rows:[],weeklyMonthSummary:[]};
+  const base=entities[0]||{monthlySummary:[],periods:[],rows:[]};
   const monthlySummary=(base.monthlySummary||[]).map((m,idx)=>({
     month:m.month,period:m.period,
     opening:entities.reduce((s,e)=>s+Number(e.monthlySummary?.[idx]?.opening||0),0),
@@ -898,28 +866,7 @@ function buildGroupFromEntities(entities){
     if(r.type==='total') byLabel[key].type='total';
   }));
   const rows=labels.map(k=>byLabel[k]);
-
-  const weekMonths=[...new Set(entities.flatMap(e=>(e.weeklyMonthSummary||[]).map(w=>w.month)))];
-  const weeklyMonthSummary=weekMonths.map(month=>{
-    const allLabels=[...new Set(entities.flatMap(e=>((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.weeks||[]).map(w=>w.label)))].sort((a,b)=>Number(a.slice(1))-Number(b.slice(1)));
-    const weeks=allLabels.map(label=>({
-      label,
-      range:entities.map(e=>((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.weeks||[]).find(w=>w.label===label)?.range).find(Boolean)||'',
-      opening:entities.reduce((s,e)=>s+Number(((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.weeks||[]).find(w=>w.label===label)?.opening||0),0),
-      inflows:entities.reduce((s,e)=>s+Number(((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.weeks||[]).find(w=>w.label===label)?.inflows||0),0),
-      outflows:entities.reduce((s,e)=>s+Number(((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.weeks||[]).find(w=>w.label===label)?.outflows||0),0),
-      closing:entities.reduce((s,e)=>s+Number(((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.weeks||[]).find(w=>w.label===label)?.closing||0),0)
-    }));
-    const sumObj=(field)=>entities.reduce((s,e)=>s+Number((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.[field]?.inflows||0),0);
-    const sumStruct=(field)=>({
-      opening:entities.reduce((s,e)=>s+Number((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.[field]?.opening||0),0),
-      inflows:entities.reduce((s,e)=>s+Number((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.[field]?.inflows||0),0),
-      outflows:entities.reduce((s,e)=>s+Number((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.[field]?.outflows||0),0),
-      closing:entities.reduce((s,e)=>s+Number((e.weeklyMonthSummary||[]).find(w=>w.month===month)?.[field]?.closing||0),0)
-    });
-    return {month,weeks,forecast:sumStruct('forecast'),total:sumStruct('total')};
-  });
-  return {sheet:'GROUP',name:'Group Forecast',title:'Consolidated Group Forecast',unit:"AED '000",periods,rows,monthlySummary,weeklyMonthSummary};
+  return {sheet:'GROUP',name:'Group Forecast',title:'Consolidated Group Forecast',unit:"AED '000",periods,rows,monthlySummary};
 }
 function normalizeGooglePayload(json){
   if(json.entities&&json.group) return json;
@@ -958,66 +905,23 @@ async function refreshFromGoogleSheet(){
 function handleExcelImport(e){ alert('Excel import button is ready in the UI. For reliable live updates from GitHub, use the Google Apps Script JSON connection so the hosted HTML can refresh from your Google Sheet.'); e.target.value=''; }
 
 
-
-function forecastForEntityId(entId){
-  const ent=D.entities.find(e=>e.id===entId);
-  if(!ent) return null;
-  const key=String(ent.id||ent.name||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  return forecastSheets().find(s=>s.sheet!=='GROUP' && String(s.sheet).toUpperCase().replace(/[^A-Z0-9]/g,'')===key)
-      || forecastSheets().find(s=>s.sheet!=='GROUP' && String(s.name).toUpperCase().replace(/[^A-Z0-9]/g,'')===key);
-}
-function forecastMonthlyRows(s){
-  return monthsOnly(s?.monthlySummary||[]).map(r=>({month:r.month,opening:Number(r.opening)||0,inflow:Number(r.inflows)||0,outflow:Number(r.outflows)||0,closing:Number(r.closing)||0}));
-}
-function renderFlexibleWeeklyTable(s){
-  const wk=s?.weeklyMonthSummary||[];
-  if(!wk.length) return '<div class="note">No weekly columns detected yet. Weekly columns should be named like Jun W1, Jun W2, Jun W3, Jun W4 / W5, plus Forecast and TOT.</div>';
-  const rows=[];
-  wk.forEach(m=>{
-    const cols=[...(m.weeks||[]), {label:'Forecast',range:'Remaining weeks',...(m.forecast||{})}, {label:'Total',range:'Month total',...(m.total||{})}];
-    rows.push(`<table class="weekly-table"><thead><tr><th>${escapeHtml(m.month)}</th>${cols.map(c=>`<th class="${c.label==='Forecast'?'forecast-col':c.label==='Total'?'total-col':''}">${escapeHtml(c.label)}</th>`).join('')}</tr><tr><th>Period</th>${cols.map(c=>`<th class="${c.label==='Forecast'?'forecast-col':c.label==='Total'?'total-col':''}">${escapeHtml(c.range||'')}</th>`).join('')}</tr></thead><tbody>
-      <tr><td class="rowhead">Opening balance</td>${cols.map(c=>`<td class="num">${fmt(c.opening)}</td>`).join('')}</tr>
-      <tr><td class="rowhead">Total inflows</td>${cols.map(c=>`<td class="num pos">${fmt(c.inflows)}</td>`).join('')}</tr>
-      <tr><td class="rowhead">Total outflows</td>${cols.map(c=>`<td class="num neg">${fmt(c.outflows)}</td>`).join('')}</tr>
-      <tr><td class="rowhead">Net movement</td>${cols.map(c=>`<td class="num ${cls((Number(c.inflows)||0)-(Number(c.outflows)||0))}">${fmt((Number(c.inflows)||0)-(Number(c.outflows)||0))}</td>`).join('')}</tr>
-      <tr><td class="rowhead">Closing balance</td>${cols.map(c=>`<td class="num ${cls(c.closing)}">${fmt(c.closing)}</td>`).join('')}</tr>
-    </tbody></table>`);
-  });
-  return `<div class="weeklywrap">${rows.join('<div style="height:12px"></div>')}</div>`;
-}
-
 /* ---------------- by entity ---------------- */
 let curEntity=ENTITIES[0].id;
 function renderEntity(){
   $('entityPills').innerHTML=D.entities.map(e=>`<div class="pill ${e.id===curEntity?'active':''}" onclick="setEntity('${e.id}')">${e.name}</div>`).join('');
   const ent=D.entities.find(e=>e.id===curEntity);
-  const fs=forecastForEntityId(curEntity);
-  if(fs){
-    const rows=forecastMonthlyRows(fs);
-    const opening=rows[0]?.opening||0;
-    const inS=rows.reduce((a,r)=>a+r.inflow,0), outS=rows.reduce((a,r)=>a+r.outflow,0);
-    const close=rows[rows.length-1]?.closing||0;
-    $('entitySummaryTitle').textContent=(ent?.name||fs.name)+' — monthly summary';
-    $('entityStats').innerHTML=`
-      <div><span class="s-lbl">Opening</span><span class="s-val num">${fmt(opening)}</span></div>
-      <div><span class="s-lbl">Inflows YTD</span><span class="s-val num pos">${fmt(inS)}</span></div>
-      <div><span class="s-lbl">Outflows YTD</span><span class="s-val num neg">${fmt(outS)}</span></div>
-      <div><span class="s-lbl">Net</span><span class="s-val num ${cls(inS-outS)}">${fmt(inS-outS)}</span></div>
-      <div><span class="s-lbl">Closing</span><span class="s-val num ${cls(close)}">${fmt(close)}</span></div>`;
-    $('entitySummary').innerHTML=summaryTable(rows, opening)+renderFlexibleWeeklyTable(fs);
-  }else{
-    const em=entityMonthly(curEntity);
-    const inS=em.rows.reduce((a,r)=>a+r.inflow,0), outS=em.rows.reduce((a,r)=>a+r.outflow,0);
-    const close=em.rows[11].closing;
-    $('entitySummaryTitle').textContent=ent.name+' — monthly summary';
-    $('entityStats').innerHTML=`
-      <div><span class="s-lbl">Opening</span><span class="s-val num">${fmt(em.opening)}</span></div>
-      <div><span class="s-lbl">Inflows YTD</span><span class="s-val num pos">${fmt(inS)}</span></div>
-      <div><span class="s-lbl">Outflows YTD</span><span class="s-val num neg">${fmt(outS)}</span></div>
-      <div><span class="s-lbl">Net</span><span class="s-val num ${cls(inS-outS)}">${fmt(inS-outS)}</span></div>
-      <div><span class="s-lbl">Closing</span><span class="s-val num ${cls(close)}">${fmt(close)}</span></div>`;
-    $('entitySummary').innerHTML=summaryTable(em.rows, em.opening);
-  }
+  const em=entityMonthly(curEntity);
+  const inS=em.rows.reduce((a,r)=>a+r.inflow,0), outS=em.rows.reduce((a,r)=>a+r.outflow,0);
+  const close=em.rows[11].closing;
+  $('entitySummaryTitle').textContent=ent.name+' — monthly summary';
+  $('entityStats').innerHTML=`
+    <div><span class="s-lbl">Opening</span><span class="s-val num">${fmt(em.opening)}</span></div>
+    <div><span class="s-lbl">Inflows YTD</span><span class="s-val num pos">${fmt(inS)}</span></div>
+    <div><span class="s-lbl">Outflows YTD</span><span class="s-val num neg">${fmt(outS)}</span></div>
+    <div><span class="s-lbl">Net</span><span class="s-val num ${cls(inS-outS)}">${fmt(inS-outS)}</span></div>
+    <div><span class="s-lbl">Closing</span><span class="s-val num ${cls(close)}">${fmt(close)}</span></div>`;
+  $('entitySummary').innerHTML=summaryTable(em.rows, em.opening);
+  // entity ledger
   const tx=D.transactions.filter(t=>t.entityId===curEntity && mKey(t.date).startsWith(''+D.year)).sort((a,b)=>a.date<b.date?1:-1);
   $('entityLedger').innerHTML=ledgerTableHTML(tx);
 }
