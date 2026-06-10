@@ -195,13 +195,6 @@
   <!-- CONSOLIDATED -->
   <section class="view active" id="view-dashboard">
     <div class="grid kpis" id="kpis"></div>
-    <div class="card panel" id="qiddiyaLiquidityPanel" style="display:none">
-      <div class="panelhead">
-        <div><h2>Liquid cash available for use</h2>
-        <p class="hint">This section uses the Google Sheet <strong>Dashboard</strong> tab and excludes Qiddiya Phase 1A &amp; 1B JV cash movements from the <strong>Qiddiya Balance</strong> tab.</p></div>
-      </div>
-      <div class="tablewrap" id="qiddiyaLiquidity"></div>
-    </div>
     <div class="card panel">
       <div class="panelhead">
         <div><h2>Closing balance &amp; monthly net</h2>
@@ -385,16 +378,10 @@
       <div class="panelhead"><h2>Google Sheet live connection</h2><span class="tag">Live data source</span></div>
       <p class="hint">Your Apps Script URL is saved here. After updating the Google Sheet, click Refresh Google Sheet to update the dashboard figures.</p>
       <div class="toolbar">
-        <label class="fld">Report Date
-          <input type="date" id="reportDateSettings" onchange="saveReportSettings()" />
-        </label>
-        <label class="fld" style="min-width:220px">Forecast Period
-          <input type="text" id="forecastPeriodSettings" placeholder="Jan-26 to Dec-26" onchange="saveReportSettings()" />
-        </label>
         <label class="fld" style="flex:1;min-width:320px">Google Apps Script API URL
           <input type="text" id="googleSheetUrlSettings" placeholder="https://script.google.com/macros/s/.../exec" />
         </label>
-        <button class="btn" onclick="saveGoogleSheetUrl();saveReportSettings()">Save Settings</button>
+        <button class="btn" onclick="saveGoogleSheetUrl()">Save URL</button>
         <button class="btn ghost" onclick="refreshFromGoogleSheet()">Refresh Google Sheet</button>
       </div>
       <div class="note" id="googleSheetNoteSettings">Not refreshed yet.</div>
@@ -551,8 +538,9 @@ function consolidated(){
 
 /* ---------------- rendering: consolidated ---------------- */
 function renderDashboard(){
-  // Option B: main Consolidated view keeps the Dashboard tab figures INCLUDING Qiddiya.
-  // A separate KPI card and table show liquid cash available EXCLUDING Qiddiya.
+  // The Consolidated tab must be driven by the imported Group Forecast,
+  // not the separate transaction-entry ledger. This keeps it aligned with
+  // the Group Forecast and Business Unit forecast tabs.
   const group = (typeof FORECAST_DATA !== 'undefined' && FORECAST_DATA.group) ? FORECAST_DATA.group : null;
   if(!group || !group.monthlySummary){
     const c=consolidated();
@@ -579,23 +567,14 @@ function renderDashboard(){
   const closing = Number(year.closing)||Number(months[months.length-1]?.closing)||0;
   const net = inSum-outSum;
 
-  const scope = 'Group Forecast · including Qiddiya';
-  const liqYear = FORECAST_DATA.liquidExQiddiya && FORECAST_DATA.liquidExQiddiya.monthlySummary
-    ? FORECAST_DATA.liquidExQiddiya.monthlySummary.find(r=>r.month==='Year Total')
-    : null;
-  const kpiCards=[
-    ['Opening balance', fmt(opening),scope+' · '+(FORECAST_DATA.asOf||D.year),''],
-    ['Total inflows', fmt(inSum),'Forecast receipts including Qiddiya','pos'],
-    ['Total outflows', fmt(outSum),'Forecast payments including Qiddiya','neg'],
-    ['Closing balance', fmt(closing), (net>=0?'Net +':'Net ')+fmt(net)+' for year · including Qiddiya', cls(closing)]
-  ];
-  if(liqYear){
-    kpiCards.push(['Liquid cash available', fmt(Number(liqYear.closing)||0), 'Excluding Qiddiya JV cash', cls(Number(liqYear.closing)||0)]);
-  }
-  $('kpis').innerHTML=kpiCards.map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
+  $('kpis').innerHTML=[
+    ['Opening balance', fmt(opening),'Group Forecast · '+(FORECAST_DATA.asOf||D.year),''],
+    ['Total inflows', fmt(inSum),'Forecast receipts','pos'],
+    ['Total outflows', fmt(outSum),'Forecast payments','neg'],
+    ['Closing balance', fmt(closing), (net>=0?'Net +':'Net ')+fmt(net)+' for year', cls(closing)]
+  ].map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
 
   $('consSummary').innerHTML=summaryTable(months, opening);
-  renderQiddiyaLiquidity();
   renderChart(months);
 
   const entitySheets = forecastSheets().filter(s=>s.sheet!=='GROUP');
@@ -774,8 +753,6 @@ function exportAlpsCSV(){
 /* ---------------- Google Sheet connection defaults ---------------- */
 const DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
 const SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB'];
-const DASHBOARD_SHEET_NAME = 'Dashboard';
-const QIDDIYA_SHEET_NAME = 'Qiddiya Balance';
 
 /* ---------------- executive management features ---------------- */
 let actuals = JSON.parse(localStorage.getItem('cf_actuals')||'{}');
@@ -877,11 +854,9 @@ function renderExecutiveSummary(){
   const g=FORECAST_DATA.group, months=monthsOnly(g.monthlySummary), year=g.monthlySummary.find(x=>x.month==='Year Total')||{};
   const first=months[0]||{}, last=months[months.length-1]||{};
   const net=(Number(year.inflows)||0)-(Number(year.outflows)||0);
-  const rs=reportSettings(), rd=rs.date?formatReportDate(rs.date):(FORECAST_DATA.asOf||'latest upload');
-  const cashScope=FORECAST_DATA.liquidExQiddiya?'Liquid cash excluding Qiddiya':'Group cash';
-  $('execAsOf').textContent=`As of ${rd} · Forecast period ${rs.period||'Jan-26 to Dec-26'} · figures in AED '000`;
+  $('execAsOf').textContent=`As of ${FORECAST_DATA.asOf||'latest upload'} · figures in AED '000`;
   $('execKpis').innerHTML=[
-    ['Opening Cash',alpsFmt(first.opening),cashScope+' opening',''],['Closing Cash',alpsFmt(last.closing),cashScope+' closing',alpsValClass(last.closing)],['Total Collections',alpsFmt(year.inflows),'Forecast inflows','pos'],['Total Payments',alpsFmt(year.outflows),'Forecast outflows','neg'],['Net Movement',alpsFmt(net),'Inflows less outflows',alpsValClass(net)],['Funding Gap',alpsFmt(calcFundingGap()),'Threshold shortfall','neg']
+    ['Opening Cash',alpsFmt(first.opening),'Start of forecast',''],['Closing Cash',alpsFmt(last.closing),'End of forecast',alpsValClass(last.closing)],['Total Collections',alpsFmt(year.inflows),'Forecast inflows','pos'],['Total Payments',alpsFmt(year.outflows),'Forecast outflows','neg'],['Net Movement',alpsFmt(net),'Inflows less outflows',alpsValClass(net)],['Funding Gap',alpsFmt(calcFundingGap()),'Threshold shortfall','neg']
   ].map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
   renderExeSummaryBlocks(FORECAST_DATA.exeSummary || []);
   renderFundingAlerts(); renderThresholdTable(); renderVarianceTable();
@@ -934,34 +909,6 @@ function saveGoogleSheetUrl(){
   ['googleSheetUrl','googleSheetUrlSettings'].forEach(id=>{ if($(id)) $(id).value=v; });
   setGoogleNotes('Google Sheet URL saved. Click Refresh Google Sheet after updating the workbook.');
 }
-
-function reportSettings(){
-  return {
-    date: localStorage.getItem('cf_report_date') || '',
-    period: localStorage.getItem('cf_forecast_period') || 'Jan-26 to Dec-26'
-  };
-}
-function formatReportDate(v){
-  if(!v) return '';
-  const d=new Date(v+'T00:00:00');
-  if(isNaN(d)) return v;
-  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-}
-function saveReportSettings(){
-  const d=$('reportDateSettings')?$('reportDateSettings').value:'';
-  const p=$('forecastPeriodSettings')?$('forecastPeriodSettings').value:'';
-  if(d) localStorage.setItem('cf_report_date',d);
-  if(p) localStorage.setItem('cf_forecast_period',p);
-  syncReportSettings();
-  refreshAll();
-}
-function syncReportSettings(){
-  const rs=reportSettings();
-  if($('reportDateSettings')) $('reportDateSettings').value=rs.date;
-  if($('forecastPeriodSettings')) $('forecastPeriodSettings').value=rs.period;
-  const label=rs.date ? 'Report date: '+formatReportDate(rs.date) : '';
-  if($('subline')) $('subline').textContent='Al Laith Group · Consolidated treasury across business units'+(label?' · '+label:'');
-}
 function gsNumber(v){ if(v===null||v===undefined||v==='') return null; const s=String(v).replace(/,/g,'').replace(/[()]/g,m=>m==='('?'-':'').trim(); const n=Number(s); return isNaN(n)?null:n; }
 function cleanText(v){ return String(v??'').replace(/\s+/g,' ').trim(); }
 function detectMonthRow(matrix){
@@ -969,119 +916,6 @@ function detectMonthRow(matrix){
   let best={idx:-1,count:0};
   matrix.slice(0,20).forEach((row,idx)=>{ const count=row.filter(c=>months.includes(cleanText(c).slice(0,3)) || cleanText(c)==='Total').length; if(count>best.count) best={idx,count}; });
   return best.count>=3?best.idx:-1;
-}
-
-function monthKeyFromHeader(v){
-  const t=cleanText(v);
-  const m=t.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
-  return m ? m[1].slice(0,3).replace(/^./,c=>c.toUpperCase()) : '';
-}
-function parseDashboardTab(matrix){
-  const rows=matrix||[]; if(!rows.length) return null;
-  let headerRow=-1, monthCols=[];
-  rows.forEach((r,ri)=>{
-    if(headerRow>=0) return;
-    const cols=[];
-    r.forEach((c,ci)=>{ const mk=monthKeyFromHeader(c); if(mk) cols.push({col:ci,month:mk,header:cleanText(c)}); });
-    const uniq=new Set(cols.map(x=>x.month));
-    if(uniq.size>=6){ headerRow=ri; monthCols=cols.filter(x=>x.month!==''); }
-  });
-  if(headerRow<0 || !monthCols.length) return null;
-  const asOfCell=(rows[0]||[]).find(c=>/\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/.test(cleanText(c)));
-  const findRow=(pattern, start=headerRow+1, end=rows.length)=>{
-    for(let r=start;r<end;r++){
-      const label=cleanText((rows[r]||[])[0]||'') || cleanText((rows[r]||[])[1]||'');
-      if(pattern.test(label)) return rows[r];
-    }
-    return null;
-  };
-  const stopIdx=rows.findIndex((r,ri)=>ri>headerRow && /Consolidated Cash Position|NB:/i.test(cleanText((r||[]).join(' '))));
-  const end=stopIdx>headerRow?stopIdx:Math.min(rows.length,headerRow+12);
-  const openingRow=findRow(/Estimated Cash.*Opening|Cash Balance Opening|Opening/i, headerRow+1, end);
-  const inflowRow=findRow(/^Total Inflows|Total Inflows/i, headerRow+1, end);
-  const outflowRow=findRow(/^Total Outflows|Total Outflow/i, headerRow+1, end);
-  const closingRow=findRow(/Estimated Cash.*Closing|Cash Balance Closing|Closing/i, headerRow+1, end);
-  if(!openingRow || !inflowRow || !outflowRow || !closingRow) return null;
-  const monthlySummary=monthCols.filter(x=>x.month!=='').slice(0,12).map(x=>({
-    month:x.month, period:'TOT',
-    opening:gsNumber(openingRow[x.col])||0,
-    inflows:gsNumber(inflowRow[x.col])||0,
-    outflows:gsNumber(outflowRow[x.col])||0,
-    closing:gsNumber(closingRow[x.col])||0
-  }));
-  monthlySummary.push({
-    month:'Year Total', period:'Total',
-    opening:monthlySummary[0]?.opening||0,
-    inflows:monthlySummary.reduce((s,m)=>s+(Number(m.inflows)||0),0),
-    outflows:monthlySummary.reduce((s,m)=>s+(Number(m.outflows)||0),0),
-    closing:monthlySummary[monthlySummary.length-1]?.closing||0
-  });
-  return {sheet:'DASHBOARD',name:'Dashboard Consolidated',title:'Dashboard Consolidated Cash Flow',unit:"AED '000",asOf:cleanText(asOfCell||''),monthlySummary,periods:[],rows:[]};
-}
-function parseQiddiyaBalance(matrix){
-  const rows=matrix||[]; if(!rows.length) return null;
-  let headerRow=-1, cols=[];
-  rows.forEach((r,ri)=>{
-    if(headerRow>=0) return;
-    const tmp=[];
-    r.forEach((c,ci)=>{ const mk=monthKeyFromHeader(c); if(mk) tmp.push({col:ci,month:mk,header:cleanText(c)}); });
-    if(tmp.length>=6){ headerRow=ri; cols=tmp.slice(0,12); }
-  });
-  if(headerRow<0) return null;
-  const findRow=(pattern)=>{
-    for(let r=0;r<rows.length;r++){
-      const label=cleanText((rows[r]||[])[0]);
-      if(pattern.test(label)) return rows[r];
-    }
-    return null;
-  };
-  const openingRow=findRow(/^Opening/i), inflowRow=findRow(/^Inflow/i), outflowRow=findRow(/^Outflow/i), closingRow=findRow(/^Closing/i);
-  if(!openingRow||!inflowRow||!outflowRow||!closingRow) return null;
-  const monthlySummary=cols.map(x=>({
-    month:x.month, period:'TOT',
-    opening:gsNumber(openingRow[x.col])||0,
-    inflows:gsNumber(inflowRow[x.col])||0,
-    outflows:gsNumber(outflowRow[x.col])||0,
-    closing:gsNumber(closingRow[x.col])||0
-  }));
-  monthlySummary.push({month:'Year Total',period:'Total',opening:monthlySummary[0]?.opening||0,inflows:monthlySummary.reduce((s,m)=>s+(Number(m.inflows)||0),0),outflows:monthlySummary.reduce((s,m)=>s+(Number(m.outflows)||0),0),closing:monthlySummary[monthlySummary.length-1]?.closing||0});
-  return {sheet:'QIDDIYA',name:'Qiddiya Balance',title:'Qiddiya Phase 1A & 1B JV Balance',unit:"AED '000",monthlySummary,periods:[],rows:[]};
-}
-function buildLiquidExcludingQiddiya(dashboard,qiddiya){
-  if(!dashboard || !qiddiya) return null;
-  const months12=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthlySummary=months12.map(mon=>{
-    const g=(dashboard.monthlySummary||[]).find(x=>x.month===mon)||{};
-    const q=(qiddiya.monthlySummary||[]).find(x=>x.month===mon)||{};
-    return {
-      month:mon, period:'TOT',
-      opening:(Number(g.opening)||0)-(Number(q.opening)||0),
-      inflows:(Number(g.inflows)||0)-(Number(q.inflows)||0),
-      outflows:(Number(g.outflows)||0)-(Number(q.outflows)||0),
-      closing:(Number(g.closing)||0)-(Number(q.closing)||0)
-    };
-  });
-  monthlySummary.push({month:'Year Total',period:'Total',opening:monthlySummary[0]?.opening||0,inflows:monthlySummary.reduce((s,m)=>s+(Number(m.inflows)||0),0),outflows:monthlySummary.reduce((s,m)=>s+(Number(m.outflows)||0),0),closing:monthlySummary[monthlySummary.length-1]?.closing||0});
-  return {sheet:'LIQUID',name:'Liquid Cash Available',title:'Consolidated Cash Flow Excluding Qiddiya',unit:"AED '000",monthlySummary,periods:[],rows:[]};
-}
-function renderQiddiyaLiquidity(){
-  const panel=$('qiddiyaLiquidityPanel'), box=$('qiddiyaLiquidity');
-  if(!panel||!box) return;
-  const inc=FORECAST_DATA.dashboardIncl, q=FORECAST_DATA.qiddiya, liq=FORECAST_DATA.liquidExQiddiya;
-  if(!inc || !q || !liq){ panel.style.display='none'; return; }
-  panel.style.display='';
-  const months=monthsOnly(liq.monthlySummary), year=liq.monthlySummary.find(x=>x.month==='Year Total')||{};
-  const qYear=q.monthlySummary.find(x=>x.month==='Year Total')||{};
-  const head='<tr><th>Line</th>'+MONTHS.map(m=>`<th>${m}</th>`).join('')+'<th>Total</th></tr>';
-  const row=(label,vals,total,klass='')=>`<tr><td class="rowhead">${label}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
-  box.innerHTML=`<table><thead>${head}</thead><tbody>
-    ${row('Available opening cash', months.map(m=>m.opening), year.opening)}
-    ${row('Available inflows excluding Qiddiya', months.map(m=>m.inflows), year.inflows,'pos')}
-    ${row('Available outflows excluding Qiddiya', months.map(m=>m.outflows), year.outflows,'neg')}
-    ${row('Qiddiya closing balance excluded', monthsOnly(q.monthlySummary).map(m=>m.closing), qYear.closing)}
-    </tbody><tfoot>
-    ${row('Available closing cash', months.map(m=>m.closing), year.closing, cls(year.closing))}
-    </tfoot></table>`;
 }
 function parseForecastSheet(name, matrix){
   const rows=matrix||[]; if(!rows.length) return null;
@@ -1173,21 +1007,14 @@ function normalizeGooglePayload(json){
   const sheets=json.sheets||json; const entities=[];
   SHEET_IMPORT_NAMES.forEach(name=>{ if(Array.isArray(sheets[name])){ const parsed=parseForecastSheet(name,sheets[name]); if(parsed) entities.push(parsed); } });
   if(!entities.length) throw new Error('No recognised business unit sheets were found in the API response.');
-  const dashboardIncl = Array.isArray(sheets[DASHBOARD_SHEET_NAME]) ? parseDashboardTab(sheets[DASHBOARD_SHEET_NAME]) : null;
-  const qiddiya = Array.isArray(sheets[QIDDIYA_SHEET_NAME]) ? parseQiddiyaBalance(sheets[QIDDIYA_SHEET_NAME]) : null;
-  const liquidExQiddiya = buildLiquidExcludingQiddiya(dashboardIncl,qiddiya);
-  // Option B: keep main group/consolidated view as Dashboard tab INCLUDING Qiddiya.
-  // The liquidExQiddiya object is shown separately as available liquidity.
-  const group = dashboardIncl || buildGroupFromEntities(entities);
-  const asOf = (dashboardIncl && dashboardIncl.asOf) || (json.lastUpdated?new Date(json.lastUpdated).toLocaleString():'Google Sheet');
-  return {asOf,entities,group,dashboardIncl,qiddiya,liquidExQiddiya,exeSummary:parseExeSummary(sheets['Exe Sum']||sheets['EXE SUM']||[])};
+  return {asOf:(json.lastUpdated?new Date(json.lastUpdated).toLocaleString():'Google Sheet'),entities,group:buildGroupFromEntities(entities),exeSummary:parseExeSummary(sheets['Exe Sum']||sheets['EXE SUM']||[])};
 }
 function loadJsonp(url){
   return new Promise((resolve,reject)=>{
     const cb='cfJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2);
     const sep=url.includes('?')?'&':'?';
     const script=document.createElement('script');
-    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out')); },30000);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out after 120 seconds')); },120000);
     function cleanup(){ clearTimeout(timer); delete window[cb]; if(script.parentNode) script.parentNode.removeChild(script); }
     window[cb]=(data)=>{ cleanup(); resolve(data); };
     script.onerror=()=>{ cleanup(); reject(new Error('Could not load Google Sheet API. Check Apps Script deployment and URL.')); };
@@ -1264,7 +1091,6 @@ function renderLedger(){
 
 /* ---------------- settings ---------------- */
 function renderSettings(){
-  syncReportSettings();
   $('openingTable').innerHTML=`<table><thead><tr><th>Business unit</th><th>Opening balance (${D.unit==='k'?"AED '000":'AED'})</th></tr></thead><tbody>${
     D.entities.map(e=>`<tr><td class="rowhead">${e.name}</td><td style="text-align:right"><input type="number" step="0.01" value="${e.opening}" style="width:160px;text-align:right" onchange="setOpening('${e.id}',this.value)"></td></tr>`).join('')
   }</tbody></table>`;
@@ -1380,7 +1206,7 @@ function syncControls(){
   fillEntitySelectors(); fillCategorySelectors();
 }
 function refreshAll(){
-  syncReportSettings(); renderDashboard(); renderAlpsCB(); renderExecutiveSummary(); renderEntity(); renderLedger(); renderSettings();
+  renderDashboard(); renderAlpsCB(); renderExecutiveSummary(); renderEntity(); renderLedger(); renderSettings();
 }
 
 /* ---------------- view switching ---------------- */
