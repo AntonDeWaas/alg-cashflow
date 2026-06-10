@@ -496,6 +496,10 @@
 </div>
 
 <script>
+var DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
+var SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB'];
+var DASHBOARD_DATA = null;
+var QIDDIYA_DATA = null;
 /* ---------------- storage layer (window.storage with in-memory fallback) ------------- */
 const KEY='cashflow_data';
 let hasStorage = typeof window!=='undefined' && window.storage && typeof window.storage.get==='function';
@@ -818,10 +822,10 @@ function exportAlpsCSV(){
 
 
 /* ---------------- Google Sheet connection defaults ---------------- */
-const DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
-const SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB'];
-let DASHBOARD_DATA = null;
-let QIDDIYA_DATA = null;
+// DEFAULT_GOOGLE_SHEET_URL defined at top
+// SHEET_IMPORT_NAMES defined at top
+// DASHBOARD_DATA defined at top
+// QIDDIYA_DATA defined at top
 
 /* ---------------- executive management features ---------------- */
 let actuals = JSON.parse(localStorage.getItem('cf_actuals')||'{}');
