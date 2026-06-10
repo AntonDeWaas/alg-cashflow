@@ -551,9 +551,8 @@ function consolidated(){
 
 /* ---------------- rendering: consolidated ---------------- */
 function renderDashboard(){
-  // The Consolidated tab is driven by the Google Sheet Dashboard tab when available.
-  // If Qiddiya Balance is available, the displayed group position excludes Qiddiya
-  // to show liquid cash available for use.
+  // Option B: main Consolidated view keeps the Dashboard tab figures INCLUDING Qiddiya.
+  // A separate KPI card and table show liquid cash available EXCLUDING Qiddiya.
   const group = (typeof FORECAST_DATA !== 'undefined' && FORECAST_DATA.group) ? FORECAST_DATA.group : null;
   if(!group || !group.monthlySummary){
     const c=consolidated();
@@ -580,13 +579,20 @@ function renderDashboard(){
   const closing = Number(year.closing)||Number(months[months.length-1]?.closing)||0;
   const net = inSum-outSum;
 
-  const scope = FORECAST_DATA.liquidExQiddiya ? 'Excluding Qiddiya · liquid cash available' : 'Group Forecast';
-  $('kpis').innerHTML=[
+  const scope = 'Group Forecast · including Qiddiya';
+  const liqYear = FORECAST_DATA.liquidExQiddiya && FORECAST_DATA.liquidExQiddiya.monthlySummary
+    ? FORECAST_DATA.liquidExQiddiya.monthlySummary.find(r=>r.month==='Year Total')
+    : null;
+  const kpiCards=[
     ['Opening balance', fmt(opening),scope+' · '+(FORECAST_DATA.asOf||D.year),''],
-    ['Total inflows', fmt(inSum),'Forecast receipts','pos'],
-    ['Total outflows', fmt(outSum),'Forecast payments','neg'],
-    ['Closing balance', fmt(closing), (net>=0?'Net +':'Net ')+fmt(net)+' for year', cls(closing)]
-  ].map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
+    ['Total inflows', fmt(inSum),'Forecast receipts including Qiddiya','pos'],
+    ['Total outflows', fmt(outSum),'Forecast payments including Qiddiya','neg'],
+    ['Closing balance', fmt(closing), (net>=0?'Net +':'Net ')+fmt(net)+' for year · including Qiddiya', cls(closing)]
+  ];
+  if(liqYear){
+    kpiCards.push(['Liquid cash available', fmt(Number(liqYear.closing)||0), 'Excluding Qiddiya JV cash', cls(Number(liqYear.closing)||0)]);
+  }
+  $('kpis').innerHTML=kpiCards.map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
 
   $('consSummary').innerHTML=summaryTable(months, opening);
   renderQiddiyaLiquidity();
@@ -1170,7 +1176,9 @@ function normalizeGooglePayload(json){
   const dashboardIncl = Array.isArray(sheets[DASHBOARD_SHEET_NAME]) ? parseDashboardTab(sheets[DASHBOARD_SHEET_NAME]) : null;
   const qiddiya = Array.isArray(sheets[QIDDIYA_SHEET_NAME]) ? parseQiddiyaBalance(sheets[QIDDIYA_SHEET_NAME]) : null;
   const liquidExQiddiya = buildLiquidExcludingQiddiya(dashboardIncl,qiddiya);
-  const group = liquidExQiddiya || dashboardIncl || buildGroupFromEntities(entities);
+  // Option B: keep main group/consolidated view as Dashboard tab INCLUDING Qiddiya.
+  // The liquidExQiddiya object is shown separately as available liquidity.
+  const group = dashboardIncl || buildGroupFromEntities(entities);
   const asOf = (dashboardIncl && dashboardIncl.asOf) || (json.lastUpdated?new Date(json.lastUpdated).toLocaleString():'Google Sheet');
   return {asOf,entities,group,dashboardIncl,qiddiya,liquidExQiddiya,exeSummary:parseExeSummary(sheets['Exe Sum']||sheets['EXE SUM']||[])};
 }
