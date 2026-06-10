@@ -163,6 +163,15 @@
   .liq-card .val{font-size:24px}
   .comparison-table th{white-space:nowrap}
 
+  /* Column view selector for wide treasury reports */
+  .view-mode-controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
+  .view-mode-controls select{min-width:220px}
+  .sticky-report th:first-child,.sticky-report td:first-child{position:sticky;left:0;background:var(--paper-2);z-index:2;min-width:280px;max-width:380px;white-space:normal}
+  .sticky-report thead th:first-child{z-index:5;background:#fbf9f3}
+  .sticky-report .section td{background:var(--forest)!important;color:#fff;font-weight:700;text-align:left}
+  .sticky-report .total td{font-weight:700;background:#fbf4e5;border-top:2px solid var(--line-2)}
+  .sticky-report .total td:first-child{background:#fbf4e5}
+
 </style>
 
 <header class="app">
@@ -257,6 +266,16 @@
         <div>
           <h2>Monthly cash flow excluding Qiddiya</h2>
           <p class="hint">Sourced from the Google Sheet “ALG-CB” tab and adjusted using the “Qiddiya Balance” tab.</p>
+          <div class="view-mode-controls">
+            <label class="fld">Column View
+              <select id="liquidityViewMode" onchange="renderLiquidityView()">
+                <option value="current">Current Reporting Period</option>
+                <option value="monthly">Monthly TOT Only</option>
+                <option value="weekly">Weekly Detail</option>
+              </select>
+            </label>
+            <span class="mini-note" id="liquidityViewNote">Current view keeps completed months as totals, shows the active reporting week, and keeps future months as totals.</span>
+          </div>
         </div>
       </div>
       <div class="tablewrap" id="liquiditySummary"></div>
@@ -1352,22 +1371,72 @@ function liquidityDetailPeriodRows(){
   addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
   return {periods, rows};
 }
+function liquidityColumnSelection(periods){
+  const modeEl=$('liquidityViewMode');
+  const mode=modeEl?modeEl.value:'current';
+  const monthOrder={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+  const isTot=(p)=>/\bTOT\b|^Total$/i.test(cleanText(p.period||p.header||p.key||''));
+  const isForecast=(p)=>/Forecast/i.test(cleanText(p.period||p.header||p.key||''));
+  const byMonth={};
+  periods.forEach((p,i)=>{ const m=String(p.month||p.header||'').slice(0,3); if(monthOrder[m]!==undefined){ if(!byMonth[m]) byMonth[m]=[]; byMonth[m].push(i); } });
+  const totIdxFor=(m)=> (byMonth[m]||[]).find(i=>isTot(periods[i]));
+  if(mode==='weekly'){
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows all weekly, forecast and total columns exactly as read from ALG-CB.';
+    return periods.map((_,i)=>i);
+  }
+  if(mode==='monthly'){
+    const selected=[];
+    Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly TOT Only shows only the monthly total columns for quick management review.';
+    return selected.length?selected:periods.map((_,i)=>i);
+  }
+  // Current reporting period: completed months = TOT, current month = weekly columns up to reporting date + forecast + TOT, future months = TOT
+  const rpt=getCurrentReportingPeriodInfo();
+  if(!rpt){
+    const selected=[]; Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period could not find a reporting date, so monthly totals are shown.';
+    return selected.length?selected:periods.map((_,i)=>i);
+  }
+  const curMonth=String(rpt.period.month||rpt.period.header||'').slice(0,3);
+  const curOrder=monthOrder[curMonth];
+  const selected=[];
+  Object.keys(monthOrder).forEach(m=>{
+    const mOrder=monthOrder[m];
+    const indices=byMonth[m]||[];
+    if(!indices.length) return;
+    if(mOrder<curOrder || mOrder>curOrder){
+      const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx);
+      return;
+    }
+    // Current month: show weekly/current columns up to reporting period, plus forecast and total.
+    indices.forEach(i=>{
+      const p=periods[i];
+      if(i<=rpt.index || isForecast(p) || isTot(p)) selected.push(i);
+    });
+  });
+  if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period shows completed months as totals, the active month by week/forecast, and future months as totals.';
+  return [...new Set(selected)].filter(i=>i>=0 && i<periods.length).sort((a,b)=>a-b);
+}
 function renderLiquidityPeriodTable(){
   const pack=liquidityDetailPeriodRows();
   const periods=pack.periods||[];
   const detailRows=pack.rows||[];
   if(!periods.length || !detailRows.length) return '<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
-  const headers=periods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('')+'<th>Total / Closing</th>';
+  const selected=liquidityColumnSelection(periods);
+  const shownPeriods=selected.map(i=>periods[i]);
+  const headers=shownPeriods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('')+'<th>Total / Closing</th>';
   const body=detailRows.map(r=>{
-    if(r.type==='section') return `<tr class="section"><td colspan="${periods.length+2}">${escapeHtml(r.label)}</td></tr>`;
+    if(r.type==='section') return `<tr class="section"><td colspan="${shownPeriods.length+2}">${escapeHtml(r.label)}</td></tr>`;
     const lc=(r.label||'').toLowerCase();
     const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
-    const vals=(r.values||[]).map(v=>Number(v)||0);
-    const total=/opening/i.test(r.label)?vals[0]:(/closing|balance closing/i.test(r.label)?vals[vals.length-1]:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?vals.reduce((a,b)=>a+b,0):0));
+    const allVals=(r.values||[]).map(v=>Number(v)||0);
+    const vals=selected.map(i=>allVals[i]||0);
+    const lastVal=allVals.length?allVals[allVals.length-1]:0;
+    const total=/opening/i.test(r.label)?(allVals[0]||0):(/closing|balance closing/i.test(r.label)?lastVal:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?allVals.reduce((a,b)=>a+b,0):0));
     const rowClass=r.type==='total'?' class="total"':'';
     return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
   }).join('');
-  return `<table><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<table class="sticky-report"><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
 }
 function liquidityDetailRows(){
   const group=FORECAST_DATA.group||{};
