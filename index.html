@@ -1251,6 +1251,124 @@ function liquidityAdjustedSummary(){
     };
   });
 }
+
+function parsePeriodDate(text){
+  text=cleanText(text||'');
+  if(!text) return null;
+  let m=text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(!m) return null;
+  let d=Number(m[1]), mo=Number(m[2])-1, y=Number(m[3]);
+  if(y<100) y+=2000;
+  const dt=new Date(y,mo,d);
+  if(isNaN(dt) || dt.getDate()!==d || dt.getMonth()!==mo) return null;
+  return dt;
+}
+function formatPeriodDate(dt){
+  if(!dt || isNaN(dt)) return '';
+  return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}).replace(/ /g,' ');
+}
+function periodShortLabel(p){
+  const mon=String(p.month||p.header||'').slice(0,3);
+  const period=cleanText(p.period||'');
+  const dt=parsePeriodDate(period);
+  if(dt) return (p.header||mon)+' · '+formatPeriodDate(dt);
+  if(period) return (p.header||mon)+' · '+period;
+  return p.header||mon||'';
+}
+function getCurrentReportingPeriodInfo(){
+  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods=(group.periods||[]);
+  let chosen=null;
+  periods.forEach((p,i)=>{
+    const dt=parsePeriodDate(p.period||p.key||'');
+    if(!dt) return;
+    if(!chosen || dt>chosen.date) chosen={index:i,period:p,date:dt,label:periodShortLabel(p)};
+  });
+  if(!chosen){
+    const idx=periods.findIndex(p=>/^W1|Week\s*1/i.test(cleanText(p.period||'')));
+    if(idx>=0) chosen={index:idx,period:periods[idx],date:null,label:periodShortLabel(periods[idx])};
+  }
+  return chosen;
+}
+function groupRowValues(pattern){
+  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const row=(group.rows||[]).find(r=>pattern.test(cleanText(r.label||'')));
+  return row?(row.values||[]):[];
+}
+function liquidityAtPeriodIndex(idx){
+  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const p=(group.periods||[])[idx]||{};
+  const mon=String(p.month||'').slice(0,3);
+  const q=getQiddiyaMonth(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, mon);
+  const openingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
+  const inflowVals=groupRowValues(/^Total Inflows$/i);
+  const outflowVals=groupRowValues(/^Total Outflows$/i);
+  let closingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
+  const gOpening=Number(openingVals[idx])||0;
+  const gInflows=Number(inflowVals[idx])||0;
+  const gOutflows=Number(outflowVals[idx])||0;
+  let gClosing=Number(closingVals[idx]);
+  if(!gClosing) gClosing=gOpening+gInflows-gOutflows;
+  return {
+    period:p, index:idx, month:mon,
+    groupOpening:gOpening, groupInflows:gInflows, groupOutflows:gOutflows, groupClosing:gClosing,
+    qOpening:Number(q.opening)||0, qInflows:Number(q.inflows)||0, qOutflows:Number(q.outflows)||0, qClosing:Number(q.closing)||0,
+    opening:gOpening-(Number(q.opening)||0),
+    inflows:gInflows-(Number(q.inflows)||0),
+    outflows:gOutflows-(Number(q.outflows)||0),
+    closing:gClosing-(Number(q.closing)||0)
+  };
+}
+function liquidityInitialOpening(){
+  const first=liquidityAtPeriodIndex(0);
+  return Number(first.opening)||0;
+}
+function liquidityDetailPeriodRows(){
+  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods=(group.periods||[]);
+  const rows=[];
+  const addRow=(label, values, type='line')=>rows.push({label,values,type});
+  if(!periods.length) return {periods:[], rows:[]};
+  const adj=periods.map((p,i)=>liquidityAtPeriodIndex(i));
+  addRow('Estimated Cash Balance Opening', adj.map(x=>x.opening), 'total');
+  const important = /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
+  (group.rows||[]).forEach(r=>{
+    const label=cleanText(r.label||'');
+    if(!label) return;
+    if(/Project Qiddiya Inflow/i.test(label)) return;
+    if(/Project Qiddiya Outflow/i.test(label)) return;
+    if(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)) return;
+    if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
+    if(/^Total Inflows$/i.test(label)){ addRow('Total Inflows (excluding Qiddiya)', adj.map(x=>x.inflows), 'total'); return; }
+    if(/^Total Outflows$/i.test(label)){ addRow('Total Outflows (excluding Qiddiya)', adj.map(x=>x.outflows), 'total'); return; }
+    if(r.type==='section'){
+      if(/Estimated Cash Inflows|Estimated Cash Outflows|Suppliers|Payment Of Operating|Fixed Cash|Variable Cash|Capex/i.test(label)) addRow(label, periods.map(()=>null), 'section');
+      return;
+    }
+    if(!important.test(label)) return;
+    const vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
+    if(vals.some(v=>Number(v)!==0)) addRow(label, vals, r.type||'line');
+  });
+  addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
+  return {periods, rows};
+}
+function renderLiquidityPeriodTable(){
+  const pack=liquidityDetailPeriodRows();
+  const periods=pack.periods||[];
+  const detailRows=pack.rows||[];
+  if(!periods.length || !detailRows.length) return '<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
+  const headers=periods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('')+'<th>Total / Closing</th>';
+  const body=detailRows.map(r=>{
+    if(r.type==='section') return `<tr class="section"><td colspan="${periods.length+2}">${escapeHtml(r.label)}</td></tr>`;
+    const lc=(r.label||'').toLowerCase();
+    const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
+    const vals=(r.values||[]).map(v=>Number(v)||0);
+    const total=/opening/i.test(r.label)?vals[0]:(/closing|balance closing/i.test(r.label)?vals[vals.length-1]:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?vals.reduce((a,b)=>a+b,0):0));
+    const rowClass=r.type==='total'?' class="total"':'';
+    return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
+  }).join('');
+  return `<table><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
+}
 function liquidityDetailRows(){
   const group=FORECAST_DATA.group||{};
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
@@ -1298,45 +1416,35 @@ function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
   const adjusted=liquidityAdjustedSummary();
+  const reportInfo=getCurrentReportingPeriodInfo();
+  const reportPeriod=reportInfo ? liquidityAtPeriodIndex(reportInfo.index) : null;
   const nonZeroAdj=adjusted.filter(x=>Number(x.groupClosing)!==0 || Number(x.qClosing)!==0 || Number(x.closing)!==0);
-  const last=nonZeroAdj.length?nonZeroAdj[nonZeroAdj.length-1]:adjusted[adjusted.length-1]||{};
+  const last=reportPeriod || (nonZeroAdj.length?nonZeroAdj[nonZeroAdj.length-1]:adjusted[adjusted.length-1]||{});
   const groupCash=Number(last.groupClosing)||0;
   const qiddiyaCash=Number(last.qClosing)||0;
   const liquidCash=Number(last.closing)||0;
-  const rdate=reportDateDisplay();
-  if($('liquidityAsOf')) $('liquidityAsOf').textContent = (rdate?'As at '+rdate+' · ':'')+'Liquid cash available for use is calculated from the ALG-CB consolidated detailed cash-flow sheet less the Qiddiya Balance tab. It deducts Qiddiya opening, inflows, outflows and closing balances only for this liquidity view.';
+  const liquidOpening=liquidityInitialOpening();
+  const rdate=(reportInfo&&reportInfo.date)?formatPeriodDate(reportInfo.date):reportDateDisplay();
+  const rptLabel=reportInfo?('Reporting period: '+reportInfo.label+' · '):'';
+  if($('liquidityAsOf')) $('liquidityAsOf').textContent = (rdate?'As at '+rdate+' · ':'')+rptLabel+'Liquid cash available for use is calculated from the ALG-CB consolidated detailed cash-flow sheet less the Qiddiya Balance tab. It deducts Qiddiya opening, inflows, outflows and closing balances only for this liquidity view.';
   if(!FORECAST_DATA.algCb && $('liquidityAsOf')) $('liquidityAsOf').textContent += ' Note: ALG-CB is not yet detected, so the dashboard is temporarily using the existing group forecast as fallback.';
 
   $('liquidityKpis').innerHTML=[
-    ['Group Cash incl. Qiddiya',fmt(groupCash),'Total Group cash position',''],
+    ['Liquid Opening Cash',fmt(liquidOpening),'Opening cash excluding Qiddiya',''],
+    ['Group Cash incl. Qiddiya',fmt(groupCash),'Reporting date Group position',''],
     ['Less: Qiddiya cash',fmt(qiddiyaCash),'Per Qiddiya Balance tab','neg'],
-    ['Liquid Cash Available',fmt(liquidCash),'Available for normal treasury use',cls(liquidCash)],
-    ['Report Date',rdate||'—','Set in Settings & Data','']
+    ['Reporting Date Closing',fmt(liquidCash),'Liquid cash available',cls(liquidCash)]
   ].map(k=>`<div class="card kpi liq-card"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
 
   $('liquidityBridge').innerHTML=`<table class="comparison-table"><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody>
-    <tr><td class="rowhead">Group closing cash including Qiddiya</td><td class="num">${fmt(groupCash)}</td></tr>
-    <tr><td class="rowhead">Less: Qiddiya cash balance</td><td class="num neg">${fmt(qiddiyaCash)}</td></tr>
-    <tr><td class="rowhead">Liquid cash available for use</td><td class="num ${cls(liquidCash)}">${fmt(liquidCash)}</td></tr>
+    <tr><td class="rowhead">Opening liquid cash excluding Qiddiya</td><td class="num">${fmt(liquidOpening)}</td></tr>
+    <tr><td class="rowhead">Group closing cash including Qiddiya at reporting date</td><td class="num">${fmt(groupCash)}</td></tr>
+    <tr><td class="rowhead">Less: Qiddiya cash balance at reporting date</td><td class="num neg">${fmt(qiddiyaCash)}</td></tr>
+    <tr><td class="rowhead">Reporting date liquid closing cash</td><td class="num ${cls(liquidCash)}">${fmt(liquidCash)}</td></tr>
   </tbody></table>`;
 
-  if((FORECAST_DATA.group||{}).monthlySummary && (FORECAST_DATA.group||{}).monthlySummary.length){
-    const months12=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const headers=months12.map(m=>`<th>${m}</th>`).join('')+'<th>Total / Closing</th>';
-    const detailRows=liquidityDetailRows();
-    const body=detailRows.map(r=>{
-      if(r.type==='section') return `<tr class="section"><td colspan="14">${escapeHtml(r.label)}</td></tr>`;
-      const lc=(r.label||'').toLowerCase();
-      const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
-      const vals=(r.values||[]).map(v=>Number(v)||0);
-      const total=/opening/i.test(r.label)?vals[0]:(/closing|balance closing/i.test(r.label)?vals[vals.length-1]:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?vals.reduce((a,b)=>a+b,0):0));
-      const rowClass=r.type==='total'?' class="total"':'';
-      return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
-    }).join('');
-    $('liquiditySummary').innerHTML=`<table><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
-  }else{
-    $('liquiditySummary').innerHTML='<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
-  }
+  $('liquiditySummary').innerHTML = renderLiquidityPeriodTable();
+
 
   const qsum=(qd&&qd.monthlySummary)||[];
   if(qsum.length){
