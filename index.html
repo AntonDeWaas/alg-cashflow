@@ -1212,7 +1212,10 @@ function parseQiddiyaBalance(matrix){
   const inflow=rowByLabel(rows,/^Inflow$/i, headerIdx+1);
   const outflow=rowByLabel(rows,/^Outflow$/i, headerIdx+1);
   const close=rowByLabel(rows,/^Closing/i, headerIdx+1);
-  return {cols, monthlySummary:cols.map(c=>({
+  // B12 on Qiddiya Balance: VAT recovery / economic benefit to be treated as restricted Qiddiya cash
+  // and deducted from available liquidity through the active month Forecast column.
+  const vatBenefit=gsNumber((rows[11]||[])[1])||0;
+  return {cols, vatBenefit, monthlySummary:cols.map(c=>({
     month:c.label, header:c.header,
     opening:gsNumber(open?.values?.[c.col])||0,
     inflows:gsNumber(inflow?.values?.[c.col])||0,
@@ -1232,6 +1235,23 @@ function getQiddiyaMonth(qd, mon){
 function getGroupMonth(group, mon){
   const gsum=monthsOnly((group&&group.monthlySummary)||[]);
   return gsum.find(x=>x.month===mon)||{};
+}
+function qiddiyaVatBenefit(){
+  const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA||{};
+  return Number(qd.vatBenefit)||0;
+}
+function vatBenefitTargetIndex(periods){
+  const benefit=qiddiyaVatBenefit();
+  if(!benefit || !(periods||[]).length) return -1;
+  const rpt=getCurrentReportingPeriodInfo();
+  if(!rpt) return -1;
+  const curMonth=String(rpt.period.month||rpt.period.header||'').slice(0,3);
+  const sameMonth=(periods||[]).map((p,i)=>({p,i})).filter(x=>String(x.p.month||x.p.header||'').slice(0,3)===curMonth);
+  const forecast=sameMonth.find(x=>/Forecast/i.test(cleanText(x.p.period||x.p.header||x.p.key||'')));
+  if(forecast) return forecast.i;
+  const after=sameMonth.find(x=>x.i>rpt.index);
+  if(after) return after.i;
+  return rpt.index;
 }
 function groupMonthColumnMap(group){
   const months12=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1319,6 +1339,11 @@ function liquidityAtPeriodIndex(idx){
   const p=(group.periods||[])[idx]||{};
   const mon=String(p.month||'').slice(0,3);
   const q=getQiddiyaMonth(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, mon);
+  const vatBenefit=qiddiyaVatBenefit();
+  const periods=(group.periods||[]);
+  const vatIdx=vatBenefitTargetIndex(periods);
+  const applyVatToInflow=(vatIdx===idx);
+  const applyVatToClosing=(vatIdx>=0 && idx>=vatIdx);
   const openingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
   const inflowVals=groupRowValues(/^Total Inflows$/i);
   const outflowVals=groupRowValues(/^Total Outflows$/i);
@@ -1331,11 +1356,14 @@ function liquidityAtPeriodIndex(idx){
   return {
     period:p, index:idx, month:mon,
     groupOpening:gOpening, groupInflows:gInflows, groupOutflows:gOutflows, groupClosing:gClosing,
-    qOpening:Number(q.opening)||0, qInflows:Number(q.inflows)||0, qOutflows:Number(q.outflows)||0, qClosing:Number(q.closing)||0,
+    qOpening:Number(q.opening)||0,
+    qInflows:(Number(q.inflows)||0) + (applyVatToInflow ? vatBenefit : 0),
+    qOutflows:Number(q.outflows)||0,
+    qClosing:(Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0),
     opening:gOpening-(Number(q.opening)||0),
-    inflows:gInflows-(Number(q.inflows)||0),
+    inflows:gInflows-(Number(q.inflows)||0) - (applyVatToInflow ? vatBenefit : 0),
     outflows:gOutflows-(Number(q.outflows)||0),
-    closing:gClosing-(Number(q.closing)||0)
+    closing:gClosing-((Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0))
   };
 }
 function liquidityInitialOpening(){
@@ -1349,6 +1377,8 @@ function liquidityDetailPeriodRows(){
   const addRow=(label, values, type='line')=>rows.push({label,values,type});
   if(!periods.length) return {periods:[], rows:[]};
   const adj=periods.map((p,i)=>liquidityAtPeriodIndex(i));
+  const vatBenefit=qiddiyaVatBenefit();
+  const vatIdx=vatBenefitTargetIndex(periods);
   addRow('Estimated Cash Balance Opening', adj.map(x=>x.opening), 'total');
   const important = /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
   (group.rows||[]).forEach(r=>{
@@ -1365,7 +1395,12 @@ function liquidityDetailPeriodRows(){
       return;
     }
     if(!important.test(label)) return;
-    const vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
+    let vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
+    if(/^Others$/i.test(label) && vatBenefit && vatIdx>=0){
+      vals=vals.map((v,i)=>i===vatIdx ? v-vatBenefit : v);
+      addRow('Others (incl. VAT recovery benefit adjustment)', vals, r.type||'line');
+      return;
+    }
     if(vals.some(v=>Number(v)!==0)) addRow(label, vals, r.type||'line');
   });
   addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
@@ -1523,6 +1558,7 @@ function renderLiquidityView(){
       ${row('Opening','opening')}
       ${row('Project Qiddiya Inflow','inflows','pos')}
       ${row('Project Qiddiya Outflow','outflows','neg')}
+      ${qiddiyaVatBenefit()?`<tr><td class="rowhead">VAT recovery benefit / economic benefit (B12)</td>${qsum.map((x,i)=>`<td class="num neg">${i===0?fmt(qiddiyaVatBenefit()):fmt(0)}</td>`).join('')}</tr>`:''}
       ${row('Closing','closing')}
     </tbody></table>`;
   }else{
