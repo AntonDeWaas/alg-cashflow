@@ -256,7 +256,7 @@
       <div class="panelhead">
         <div>
           <h2>Monthly cash flow excluding Qiddiya</h2>
-          <p class="hint">Sourced from the Google Sheet “Dashboard” tab. It follows the management view below “NB: The below breakdown excludes Qiddiya Film Project”.</p>
+          <p class="hint">Sourced from the Google Sheet “ALG-CB” tab and adjusted using the “Qiddiya Balance” tab.</p>
         </div>
       </div>
       <div class="tablewrap" id="liquiditySummary"></div>
@@ -1304,7 +1304,8 @@ function renderLiquidityView(){
   const qiddiyaCash=Number(last.qClosing)||0;
   const liquidCash=Number(last.closing)||0;
   const rdate=reportDateDisplay();
-  if($('liquidityAsOf')) $('liquidityAsOf').textContent = (rdate?'As at '+rdate+' · ':'')+'Liquid cash available for use is calculated from the Group Forecast less the Qiddiya Balance tab. It excludes Qiddiya opening cash, Project Qiddiya Inflows and Project Qiddiya Outflows.';
+  if($('liquidityAsOf')) $('liquidityAsOf').textContent = (rdate?'As at '+rdate+' · ':'')+'Liquid cash available for use is calculated from the ALG-CB consolidated detailed cash-flow sheet less the Qiddiya Balance tab. It deducts Qiddiya opening, inflows, outflows and closing balances only for this liquidity view.';
+  if(!FORECAST_DATA.algCb && $('liquidityAsOf')) $('liquidityAsOf').textContent += ' Note: ALG-CB is not yet detected, so the dashboard is temporarily using the existing group forecast as fallback.';
 
   $('liquidityKpis').innerHTML=[
     ['Group Cash incl. Qiddiya',fmt(groupCash),'Total Group cash position',''],
@@ -1334,7 +1335,7 @@ function renderLiquidityView(){
     }).join('');
     $('liquiditySummary').innerHTML=`<table><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
   }else{
-    $('liquiditySummary').innerHTML='<div class="empty">Refresh Google Sheet after Apps Script includes the business unit tabs and Qiddiya Balance tab.</div>';
+    $('liquiditySummary').innerHTML='<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
   }
 
   const qsum=(qd&&qd.monthlySummary)||[];
@@ -1360,13 +1361,18 @@ function normalizeGooglePayload(json){
   if(!entities.length) throw new Error('No recognised business unit sheets were found in the API response.');
   const dashboardData = parseDashboardSheet(sheets['Dashboard']||sheets['DASHBOARD']||[]);
   const qiddiyaData = parseQiddiyaBalance(sheets['Qiddiya Balance']||sheets['QIDDIYA BALANCE']||[]);
-  const group = dashboardData && dashboardData.including && dashboardData.including.monthlySummary.length
+  // ALG-CB is the preferred consolidated detailed cash-flow sheet.
+  // It should be a total/consolidation of ALPS-CB, ALICLER-CB, SS-CB, OMAN-CB, KSA-CB, ALPS BR-CB and ALPS UZ-CB.
+  // The Liquidity Excl. Qiddiya page then deducts only the Qiddiya Balance tab opening/inflow/outflow/closing.
+  const algCb = parseForecastSheet('ALG-CB', sheets['ALG-CB']||sheets['ALG CB']||sheets['ALGCB']||[]);
+  const group = algCb || (dashboardData && dashboardData.including && dashboardData.including.monthlySummary.length
     ? dashboardData.including
-    : buildGroupFromEntities(entities);
+    : buildGroupFromEntities(entities));
   return {
     asOf:(json.lastUpdated?new Date(json.lastUpdated).toLocaleString():'Google Sheet'),
     entities,
     group,
+    algCb,
     exeSummary:parseExeSummary(sheets['Exe Sum']||sheets['EXE SUM']||[]),
     dashboardData,
     qiddiyaData
