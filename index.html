@@ -1381,6 +1381,7 @@ function liquidityDetailPeriodRows(){
   const vatIdx=vatBenefitTargetIndex(periods);
   addRow('Estimated Cash Balance Opening', adj.map(x=>x.opening), 'total');
   const important = /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
+  let inOutflowSection=false;
   (group.rows||[]).forEach(r=>{
     const label=cleanText(r.label||'');
     if(!label) return;
@@ -1391,12 +1392,16 @@ function liquidityDetailPeriodRows(){
     if(/^Total Inflows$/i.test(label)){ addRow('Total Inflows (excluding Qiddiya)', adj.map(x=>x.inflows), 'total'); return; }
     if(/^Total Outflows$/i.test(label)){ addRow('Total Outflows (excluding Qiddiya)', adj.map(x=>x.outflows), 'total'); return; }
     if(r.type==='section'){
+      if(/Estimated Cash Outflows/i.test(label)) inOutflowSection=true;
+      if(/Estimated Cash Inflows/i.test(label)) inOutflowSection=false;
       if(/Estimated Cash Inflows|Estimated Cash Outflows|Suppliers|Payment Of Operating|Fixed Cash|Variable Cash|Capex/i.test(label)) addRow(label, periods.map(()=>null), 'section');
       return;
     }
     if(!important.test(label)) return;
     let vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
-    if(/^Others$/i.test(label) && vatBenefit && vatIdx>=0){
+    // VAT recovery benefit / economic benefit is a restricted-cash/liquidity adjustment, not an operating outflow.
+    // Therefore it is shown only in the inflow side Others line and never in the outflow Others row.
+    if(/^Others$/i.test(label) && !inOutflowSection && vatBenefit && vatIdx>=0){
       vals=vals.map((v,i)=>i===vatIdx ? v-vatBenefit : v);
       addRow('Others (incl. VAT recovery benefit adjustment)', vals, r.type||'line');
       return;
