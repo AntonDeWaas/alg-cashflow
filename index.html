@@ -204,6 +204,7 @@
   <button data-view="alpscb">Group Forecast</button>
   <button data-view="entity">By Business Unit</button>
   <button data-view="ledger">Transactions</button>
+  <button data-view="help">Help / Calculations</button>
   <button data-view="settings">Settings &amp; Data</button>
 </nav>
 
@@ -424,6 +425,69 @@
     </div>
     <div class="card panel" style="padding:0">
       <div class="tablewrap" id="ledgerTable" style="border:none; box-shadow:none"></div>
+    </div>
+  </section>
+
+  <!-- HELP / CALCULATION GUIDE -->
+  <section class="view" id="view-help">
+    <div class="exec-hero">
+      <div>
+        <h2>Help / Calculation Guide</h2>
+        <p>How the dashboard reads the Google Sheet and how each treasury section is presented.</p>
+      </div>
+    </div>
+
+    <div class="card panel">
+      <h2>Source of truth</h2>
+      <p class="hint">The Google Sheet remains the source of truth. The dashboard should display and format the Google Sheet data; it should not create a separate cash-flow calculation logic.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Dashboard section</th><th>Google Sheet source</th><th>Calculation / treatment</th></tr></thead>
+          <tbody>
+            <tr><td class="rowhead">Consolidated</td><td>Dashboard tab</td><td>Shows the consolidated group cash position as per the Dashboard tab.</td></tr>
+            <tr><td class="rowhead">Liquidity Excl. Qiddiya</td><td>ALG-CB + Qiddiya Balance</td><td>Uses ALG-CB as the group cash-flow base and deducts Qiddiya restricted cash items from Qiddiya Balance.</td></tr>
+            <tr><td class="rowhead">Business Unit Detail</td><td>ALPS-CB, ALICLER-CB, SS-CB, OMAN-CB, KSA-CB, ALPS BR-CB, ALPS UZ-CB</td><td>Reads each business unit tab directly and displays the same row categories from the sheet.</td></tr>
+            <tr><td class="rowhead">Executive Summary</td><td>Exe Sum tab</td><td>Displays the management commentary maintained in the Exe Sum tab.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card panel">
+      <h2>Liquidity Excluding Qiddiya</h2>
+      <p class="hint">This section is intended to show liquid cash available for normal group use, excluding Qiddiya restricted/JV-related cash.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Line</th><th>Logic</th></tr></thead>
+          <tbody>
+            <tr><td class="rowhead">Opening cash</td><td>ALG-CB opening less Qiddiya opening from Qiddiya Balance.</td></tr>
+            <tr><td class="rowhead">Inflows</td><td>ALG-CB inflow categories, with Qiddiya inflow excluded using Qiddiya Balance.</td></tr>
+            <tr><td class="rowhead">Outflows</td><td>ALG-CB outflow categories, with Qiddiya outflow excluded using Qiddiya Balance.</td></tr>
+            <tr><td class="rowhead">VAT recovery benefit</td><td>Qiddiya Balance cell B12 is treated as restricted/economic benefit cash. It reduces available liquidity in the active forecast period and is added to the Qiddiya restricted cash position. It should not be shown as an operating outflow.</td></tr>
+            <tr><td class="rowhead">Closing cash</td><td>Follows the Google Sheet structure and displayed values. The dashboard should not force a separate carry-forward calculation if the Google Sheet already calculates the closing/opening sequence.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">Important: if the Google Sheet formula is changed, refresh the dashboard and the report should follow the updated sheet logic.</div>
+    </div>
+
+    <div class="card panel">
+      <h2>Column View options</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Option</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td class="rowhead">Current Reporting Period</td><td>Shows completed months as monthly totals, the active reporting month by week/forecast, and future months as totals.</td></tr>
+            <tr><td class="rowhead">Monthly TOT Only</td><td>Compact management view showing only monthly total columns.</td></tr>
+            <tr><td class="rowhead">Weekly Detail</td><td>Full treasury working view showing all weekly and forecast columns.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card panel">
+      <h2>Reporting date</h2>
+      <p class="hint">The reporting period is identified from the reporting-date row in the cash-flow tabs, such as the date entered under the current week column. For example, if row 8 shows 09/06/2026 under Jun W1, the dashboard treats Jun W1 as the active reporting period.</p>
     </div>
   </section>
 
