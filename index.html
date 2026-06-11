@@ -161,6 +161,9 @@
   /* Version 2: report date and Qiddiya liquidity view */
   .liq-note{font-size:12px;color:var(--ink-soft);margin-top:6px}
   .liq-card .val{font-size:24px}
+  #liquidityKpis{grid-template-columns:repeat(5,1fr)}
+  @media(max-width:1100px){#liquidityKpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:820px){#liquidityKpis{grid-template-columns:repeat(2,1fr)}}
   .comparison-table th{white-space:nowrap}
 
   /* Column view selector for wide treasury reports */
@@ -1203,38 +1206,25 @@ function parseDashboardSheet(matrix){
 function parseQiddiyaBalance(matrix){
   const rows=matrix||[];
   if(!rows.length) return null;
-  const headerIdx=rows.findIndex(r=>r.some(c=>/^Jan-\d{2}$/i.test(cleanText(c)) || /^Jun\s+W\d/i.test(cleanText(c))));
+  const headerIdx=rows.findIndex(r=>r.some(c=>/^Jan-\d{2}$/i.test(cleanText(c))));
   if(headerIdx<0) return null;
   const header=rows[headerIdx]||[];
-  const subHeader=rows[headerIdx+1]||[];
   const cols=[];
-  for(let c=1;c<header.length;c++){
-    const h=cleanText(header[c]);
-    if(!h) continue;
-    const sub=cleanText(subHeader[c]||'');
-    const monMatch=h.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
-    cols.push({col:c,label:monMatch?monMatch[1].slice(0,3):h.slice(0,3),month:monMatch?monMatch[1].slice(0,3):h.slice(0,3),header:h,period:sub,key:(h+' '+sub).trim()});
-  }
+  for(let c=1;c<header.length;c++){ const h=cleanText(header[c]); if(h) cols.push({col:c,label:h.slice(0,3),header:h}); }
   const open=rowByLabel(rows,/^Opening$/i, headerIdx+1);
   const inflow=rowByLabel(rows,/^Inflow$/i, headerIdx+1);
   const outflow=rowByLabel(rows,/^Outflow$/i, headerIdx+1);
   const close=rowByLabel(rows,/^Closing/i, headerIdx+1);
-  // B13 on Qiddiya Balance / Payable: VAT recovery benefit / economic benefit.
-  // The Apps Script range starts at A2, so spreadsheet B13 is matrix[11][1].
+  // B12 on Qiddiya Balance: VAT recovery / economic benefit to be treated as restricted Qiddiya cash
+  // and deducted from available liquidity through the active month Forecast column.
   const vatBenefit=gsNumber((rows[11]||[])[1])||0;
-  let prevClosing=null;
-  const monthlySummary=cols.map((c,idx)=>{
-    const rawOpening=gsNumber(open?.values?.[c.col]);
-    const inflows=gsNumber(inflow?.values?.[c.col])||0;
-    const outflows=gsNumber(outflow?.values?.[c.col])||0;
-    const rawClosing=gsNumber(close?.values?.[c.col]);
-    // If future Qiddiya cells are blank, carry forward the previous Qiddiya closing and apply any future inflow/outflow entered.
-    const opening=(rawOpening!==null && rawOpening!==undefined && rawOpening!=='') ? Number(rawOpening) : (prevClosing!==null ? prevClosing : 0);
-    const closing=(rawClosing!==null && rawClosing!==undefined && rawClosing!=='') ? Number(rawClosing) : (opening + inflows - outflows);
-    prevClosing=closing;
-    return {index:idx, month:c.month, header:c.header, period:c.period, key:c.key, opening, inflows, outflows, closing};
-  });
-  return {cols, vatBenefit, monthlySummary};
+  return {cols, vatBenefit, monthlySummary:cols.map(c=>({
+    month:c.label, header:c.header,
+    opening:gsNumber(open?.values?.[c.col])||0,
+    inflows:gsNumber(inflow?.values?.[c.col])||0,
+    outflows:gsNumber(outflow?.values?.[c.col])||0,
+    closing:gsNumber(close?.values?.[c.col])||0
+  }))};
 }
 function lastNonZero(arr, field){
   const a=(arr||[]).filter(x=>Number(x[field])!==0);
@@ -1243,25 +1233,7 @@ function lastNonZero(arr, field){
 
 function getQiddiyaMonth(qd, mon){
   const qsum=(qd&&qd.monthlySummary)||[];
-  const same=qsum.filter(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase());
-  // For monthly summaries use the monthly TOT column if available; otherwise use the latest column for that month.
-  return same.find(x=>/\bTOT\b/i.test(cleanText((x.period||'')+' '+(x.header||'')+' '+(x.key||'')))) || same[same.length-1] || {};
-}
-function getQiddiyaPeriod(qd, idx, period){
-  const qsum=(qd&&qd.monthlySummary)||[];
-  const norm=(v)=>cleanText(v||'').toLowerCase().replace(/[^a-z0-9]+/g,'');
-  const candidates=[
-    (period&&period.header)||'',
-    (period&&period.key)||'',
-    ((period&&period.header)||'')+' '+((period&&period.period)||''),
-    ((period&&period.month)||'')+' '+((period&&period.period)||'')
-  ].map(norm).filter(Boolean);
-  if(candidates.length){
-    const exact=qsum.find(x=>candidates.includes(norm(x.header||'')) || candidates.includes(norm(x.key||'')) || candidates.includes(norm((x.header||'')+' '+(x.period||''))));
-    if(exact) return exact;
-  }
-  if(qsum[idx]) return qsum[idx];
-  return getQiddiyaMonth(qd, (period&&period.month)||'');
+  return qsum.find(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase())||{};
 }
 function getGroupMonth(group, mon){
   const gsum=monthsOnly((group&&group.monthlySummary)||[]);
@@ -1369,7 +1341,7 @@ function liquidityAtPeriodIndex(idx){
   const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
   const p=(group.periods||[])[idx]||{};
   const mon=String(p.month||'').slice(0,3);
-  const q=getQiddiyaPeriod(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, idx, p);
+  const q=getQiddiyaMonth(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, mon);
   const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
   const vatIdx=vatBenefitTargetIndex(periods);
@@ -1502,10 +1474,7 @@ function renderLiquidityPeriodTable(){
     const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
     const allVals=(r.values||[]).map(v=>Number(v)||0);
     const vals=selected.map(i=>allVals[i]||0);
-    const decClosingIdx=periods.findIndex(p=>String(p.month||'').slice(0,3)==='Dec' && /\bTOT\b/i.test(cleanText(p.period||p.header||p.key||'')));
-    const lastPeriodIdx=decClosingIdx>=0 ? decClosingIdx : (periods.length-1);
-    const lastVal=allVals.length?allVals[lastPeriodIdx]:0;
-    // Balance rows: final column should be the final forecast period closing (Dec-26 TOT), not a sum or source-sheet total column.
+    const lastVal=allVals.length?allVals[allVals.length-1]:0;
     const total=/opening/i.test(r.label)?(allVals[0]||0):(/closing|balance closing/i.test(r.label)?lastVal:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?allVals.reduce((a,b)=>a+b,0):0));
     const rowClass=r.type==='total'?' class="total"':'';
     return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
@@ -1565,6 +1534,7 @@ function renderLiquidityView(){
   const last=reportPeriod || (nonZeroAdj.length?nonZeroAdj[nonZeroAdj.length-1]:adjusted[adjusted.length-1]||{});
   const groupCash=Number(last.groupClosing)||0;
   const qiddiyaCash=Number(last.qClosing)||0;
+  const vatBenefit=qiddiyaVatBenefit();
   const liquidCash=Number(last.closing)||0;
   const liquidOpening=liquidityInitialOpening();
   const rdate=(reportInfo&&reportInfo.date)?formatPeriodDate(reportInfo.date):reportDateDisplay();
@@ -1576,6 +1546,7 @@ function renderLiquidityView(){
     ['Liquid Opening Cash',fmt(liquidOpening),'Opening cash excluding Qiddiya',''],
     ['Group Cash incl. Qiddiya',fmt(groupCash),'Reporting date Group position',''],
     ['Less: Qiddiya cash',fmt(qiddiyaCash),'Per Qiddiya Balance tab','neg'],
+    ['VAT Recovery Benefit',fmt(vatBenefit),'Information only · Qiddiya Payable B13','neg'],
     ['Reporting Date Closing',fmt(liquidCash),'Liquid cash available',cls(liquidCash)]
   ].map(k=>`<div class="card kpi liq-card"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
 
@@ -1583,6 +1554,7 @@ function renderLiquidityView(){
     <tr><td class="rowhead">Opening liquid cash excluding Qiddiya</td><td class="num">${fmt(liquidOpening)}</td></tr>
     <tr><td class="rowhead">Group closing cash including Qiddiya at reporting date</td><td class="num">${fmt(groupCash)}</td></tr>
     <tr><td class="rowhead">Less: Qiddiya cash balance at reporting date</td><td class="num neg">${fmt(qiddiyaCash)}</td></tr>
+    <tr><td class="rowhead">VAT recovery benefit / economic benefit (information only)</td><td class="num neg">${fmt(vatBenefit)}</td></tr>
     <tr><td class="rowhead">Reporting date liquid closing cash</td><td class="num ${cls(liquidCash)}">${fmt(liquidCash)}</td></tr>
   </tbody></table>`;
 
