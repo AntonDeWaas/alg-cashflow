@@ -1203,60 +1203,74 @@ function parseDashboardSheet(matrix){
 function parseQiddiyaBalance(matrix){
   const rows=matrix||[];
   if(!rows.length) return null;
-  const months12=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const headerIdx=rows.findIndex(r=>r.some(c=>/Jan-\d{2}|Feb-\d{2}|Mar-\d{2}|Jun\s*W\d/i.test(cleanText(c))));
+  const headerIdx=rows.findIndex(r=>r.some(c=>/^Jan-\d{2}/i.test(cleanText(c))));
   if(headerIdx<0) return null;
   const header=rows[headerIdx]||[];
-  const periods=[];
+  const cols=[];
   for(let c=1;c<header.length;c++){
     const h=cleanText(header[c]);
-    if(!h) continue;
-    const m=(h.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i)||[])[1];
-    if(!m) continue;
-    const month=m.slice(0,1).toUpperCase()+m.slice(1,3).toLowerCase();
-    let period='';
-    if(/Forecast/i.test(h)) period='Forecast';
-    else if(/\bTOT\b|Total/i.test(h)) period='TOT';
-    else { const wk=h.match(/W\s*(\d+)/i); if(wk) period='W'+wk[1]; }
-    const dateMatch=h.match(/(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/);
-    periods.push({col:c,month,period,key:(month+' '+period).trim(),header:h,dateText:dateMatch?dateMatch[1]:''});
+    if(h) cols.push({col:c,label:h.slice(0,3),header:h,index:cols.length});
   }
   const open=rowByLabel(rows,/^Opening$/i, headerIdx+1);
   const inflow=rowByLabel(rows,/^Inflow$/i, headerIdx+1);
   const outflow=rowByLabel(rows,/^Outflow$/i, headerIdx+1);
   const close=rowByLabel(rows,/^Closing/i, headerIdx+1);
-  const cfClose=rowByLabel(rows,/^Cash\s*Flow\s*Closing$/i, headerIdx+1);
-  const cfNetClose=rowByLabel(rows,/^Cash\s*Flow\s*Net\s*Closing$/i, headerIdx+1);
-  const vatRow=rowByLabel(rows,/VAT\s*recovery|economic\s*benefit/i, headerIdx+1);
-  const vatVals=periods.map(p=>gsNumber(vatRow?.values?.[p.col])||0);
-  const vatBenefit=vatVals.find(v=>Number(v)!==0)||0;
-  const monthlySummary=[];
-  months12.forEach(mon=>{
-    const idxs=periods.map((p,i)=>({p,i})).filter(x=>x.p.month===mon);
-    if(!idxs.length) return;
-    let chosen=idxs.find(x=>/^TOT$/i.test(x.p.period));
-    if(!chosen) chosen=idxs[idxs.length-1];
-    const p=periods[chosen.i];
-    monthlySummary.push({
-      month:mon, period:p.period, header:p.header,
-      opening:gsNumber(open?.values?.[p.col])||0,
-      inflows:gsNumber(inflow?.values?.[p.col])||0,
-      outflows:gsNumber(outflow?.values?.[p.col])||0,
-      closing:gsNumber(close?.values?.[p.col])||0,
-      cashFlowClosing:gsNumber(cfClose?.values?.[p.col])||0,
-      cashFlowNetClosing:gsNumber(cfNetClose?.values?.[p.col])||0
-    });
+  const vatRow=rowByLabel(rows,/VAT recovery benefit|economic benefit/i, headerIdx+1);
+  // B13 on the updated Qiddiya Balance/Payable tab: VAT recovery / economic benefit.
+  // It is not an operating cash flow; it is added to restricted Qiddiya cash and shown as a negative
+  // liquidity adjustment in the active Forecast column for presentation.
+  const vatBenefit=gsNumber((vatRow&&vatRow.values?vatRow.values[1]:undefined))||gsNumber((rows[11]||[])[1])||0;
+  const monthlySummary=cols.map((c,idx)=>({
+    month:c.label, header:c.header, col:c.col, index:idx,
+    opening:gsNumber(open?.values?.[c.col])||0,
+    inflows:gsNumber(inflow?.values?.[c.col])||0,
+    outflows:gsNumber(outflow?.values?.[c.col])||0,
+    closing:gsNumber(close?.values?.[c.col])||0
+  }));
+  // Carry Qiddiya balance forward where the weekly/future columns have no explicit opening/closing yet.
+  // This follows the Qiddiya Payable schedule and prevents future liquidity columns from ignoring the
+  // latest restricted Qiddiya closing balance.
+  let prevClosing=null;
+  monthlySummary.forEach(x=>{
+    const hasOpen=Number(x.opening)!==0;
+    const hasClose=Number(x.closing)!==0;
+    if(!hasOpen && prevClosing!==null) x.opening=prevClosing;
+    if(!hasClose && prevClosing!==null) x.closing=(Number(x.opening)||0)+(Number(x.inflows)||0)-(Number(x.outflows)||0);
+    if(Number(x.closing)!==0 || hasClose) prevClosing=Number(x.closing)||0;
   });
-  return {
-    cols:periods.map(p=>({col:p.col,label:p.month,header:p.header,period:p.period})), periods, vatBenefit, vatVals,
-    opening:periods.map(p=>gsNumber(open?.values?.[p.col])||0),
-    inflows:periods.map(p=>gsNumber(inflow?.values?.[p.col])||0),
-    outflows:periods.map(p=>gsNumber(outflow?.values?.[p.col])||0),
-    closing:periods.map(p=>gsNumber(close?.values?.[p.col])||0),
-    cashFlowClosing:periods.map(p=>gsNumber(cfClose?.values?.[p.col])||0),
-    cashFlowNetClosing:periods.map(p=>gsNumber(cfNetClose?.values?.[p.col])||0),
-    monthlySummary
-  };
+  return {cols, vatBenefit, monthlySummary};
+}
+function qiddiyaPeriodKeyFromText(txt){
+  txt=cleanText(txt||'').replace(/\s+/g,' ');
+  const mon=(txt.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[- ]?\d{0,2}/i)||[])[1];
+  if(!mon) return '';
+  const m=mon.slice(0,3).toLowerCase();
+  if(/forecast/i.test(txt)) return m+'|forecast';
+  if(/\bTOT\b|total/i.test(txt)) return m+'|tot';
+  const w=txt.match(/\bW(?:eek)?\s*(\d)\b/i);
+  if(w) return m+'|w'+w[1];
+  const d=txt.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if(d) return m+'|date|'+d[1].padStart(2,'0')+'/'+d[2].padStart(2,'0');
+  return m+'|';
+}
+function qiddiyaPeriodKeyFromPeriod(p){
+  const txt=[p.header,p.month,p.period,p.key].filter(Boolean).join(' ');
+  return qiddiyaPeriodKeyFromText(txt);
+}
+function getQiddiyaForPeriod(qd, period, idx){
+  const qsum=(qd&&qd.monthlySummary)||[];
+  if(!qsum.length) return {};
+  const key=qiddiyaPeriodKeyFromPeriod(period||{});
+  let found=qsum.find(x=>qiddiyaPeriodKeyFromText(x.header)===key);
+  if(found) return found;
+  const mon=String((period&&period.month)||'').slice(0,3).toLowerCase();
+  if(mon){
+    const same=qsum.filter(x=>String(x.month||'').slice(0,3).toLowerCase()===mon);
+    if(/forecast/i.test(cleanText(period?.period||period?.header||''))) found=same.find(x=>/forecast/i.test(x.header));
+    if(!found && /^TOT$/i.test(cleanText(period?.period||''))) found=same.find(x=>/\bTOT\b/i.test(x.header));
+    if(!found && same.length) found=same[0];
+  }
+  return found||{};
 }
 function lastNonZero(arr, field){
   const a=(arr||[]).filter(x=>Number(x[field])!==0);
@@ -1265,36 +1279,9 @@ function lastNonZero(arr, field){
 
 function getQiddiyaMonth(qd, mon){
   const qsum=(qd&&qd.monthlySummary)||[];
-  return qsum.find(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase())||{};
-}
-function getQiddiyaForGroupPeriod(qd, gp, fallbackIndex){
-  qd=qd||{}; gp=gp||{};
-  const periods=qd.periods||[];
-  const mon=String(gp.month||gp.header||'').slice(0,3);
-  const ptxt=cleanText((gp.period||'')+' '+(gp.header||'')+' '+(gp.key||''));
-  let wanted='';
-  if(/Forecast/i.test(ptxt)) wanted='Forecast';
-  else if(/\bTOT\b|Total/i.test(ptxt)) wanted='TOT';
-  else { const w=ptxt.match(/W\s*(\d+)/i); if(w) wanted='W'+w[1]; }
-  let found=null;
-  if(wanted) found=periods.find(p=>p.month===mon && String(p.period||'').toLowerCase()===wanted.toLowerCase());
-  if(!found && gp.period){
-    const per=cleanText(gp.period);
-    found=periods.find(p=>p.month===mon && cleanText(p.header).includes(per));
-  }
-  if(!found && typeof fallbackIndex==='number') found=periods[fallbackIndex];
-  if(!found) return {};
-  const i=periods.indexOf(found);
-  return {
-    period:found, index:i,
-    opening:Number((qd.opening||[])[i])||0,
-    inflows:Number((qd.inflows||[])[i])||0,
-    outflows:Number((qd.outflows||[])[i])||0,
-    closing:Number((qd.closing||[])[i])||0,
-    cashFlowClosing:Number((qd.cashFlowClosing||[])[i])||0,
-    cashFlowNetClosing:Number((qd.cashFlowNetClosing||[])[i])||0,
-    vat:Number((qd.vatVals||[])[i])||0
-  };
+  const same=qsum.filter(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase());
+  const tot=same.find(x=>/\bTOT\b/i.test(x.header||''));
+  return tot||same[same.length-1]||{};
 }
 function getGroupMonth(group, mon){
   const gsum=monthsOnly((group&&group.monthlySummary)||[]);
@@ -1400,9 +1387,14 @@ function groupRowValues(pattern){
 }
 function liquidityAtPeriodIndex(idx){
   const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const p=(group.periods||[])[idx]||{};
+  const mon=String(p.month||'').slice(0,3);
+  const q=getQiddiyaForPeriod(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, p, idx);
+  const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
-  const p=periods[idx]||{};
-  const q=getQiddiyaForGroupPeriod(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, p, idx);
+  const vatIdx=vatBenefitTargetIndex(periods);
+  const applyVatToInflow=(vatIdx===idx);
+  const applyVatToClosing=(vatIdx>=0 && idx>=vatIdx);
   const openingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
   const inflowVals=groupRowValues(/^Total Inflows$/i);
   const outflowVals=groupRowValues(/^Total Outflows$/i);
@@ -1412,21 +1404,17 @@ function liquidityAtPeriodIndex(idx){
   const gOutflows=Number(outflowVals[idx])||0;
   let gClosing=Number(closingVals[idx]);
   if(!gClosing) gClosing=gOpening+gInflows-gOutflows;
-  const calculatedClosing=gClosing-(Number(q.closing)||0);
-  const sheetNetClosing=Number(q.cashFlowNetClosing)||0;
-  const finalClosing=sheetNetClosing || calculatedClosing;
   return {
-    period:p, index:idx, month:String(p.month||'').slice(0,3),
+    period:p, index:idx, month:mon,
     groupOpening:gOpening, groupInflows:gInflows, groupOutflows:gOutflows, groupClosing:gClosing,
     qOpening:Number(q.opening)||0,
-    qInflows:Number(q.inflows)||0,
+    qInflows:(Number(q.inflows)||0) + (applyVatToInflow ? vatBenefit : 0),
     qOutflows:Number(q.outflows)||0,
-    qClosing:Number(q.closing)||0,
-    qVat:Number(q.vat)||0,
+    qClosing:(Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0),
     opening:gOpening-(Number(q.opening)||0),
-    inflows:gInflows-(Number(q.inflows)||0),
+    inflows:gInflows-(Number(q.inflows)||0) - (applyVatToInflow ? vatBenefit : 0),
     outflows:gOutflows-(Number(q.outflows)||0),
-    closing:finalClosing
+    closing:gClosing-((Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0))
   };
 }
 function liquidityInitialOpening(){
@@ -1462,7 +1450,13 @@ function liquidityDetailPeriodRows(){
     }
     if(!important.test(label)) return;
     let vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
-    // The dashboard does not alter operating rows. Qiddiya and VAT/economic-benefit logic is maintained in Google Sheets.
+    // VAT recovery benefit / economic benefit is a restricted-cash/liquidity adjustment, not an operating outflow.
+    // Therefore it is shown only in the inflow side Others line and never in the outflow Others row.
+    if(/^Others$/i.test(label) && !inOutflowSection && vatBenefit && vatIdx>=0){
+      vals=vals.map((v,i)=>i===vatIdx ? v-vatBenefit : v);
+      addRow('Others (incl. VAT recovery benefit adjustment)', vals, r.type||'line');
+      return;
+    }
     if(vals.some(v=>Number(v)!==0)) addRow(label, vals, r.type||'line');
   });
   addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
@@ -1592,7 +1586,7 @@ function renderLiquidityView(){
   const liquidOpening=liquidityInitialOpening();
   const rdate=(reportInfo&&reportInfo.date)?formatPeriodDate(reportInfo.date):reportDateDisplay();
   const rptLabel=reportInfo?('Reporting period: '+reportInfo.label+' · '):'';
-  if($('liquidityAsOf')) $('liquidityAsOf').textContent = (rdate?'As at '+rdate+' · ':'')+rptLabel+'Liquid cash available for use is calculated from the ALG-CB consolidated detailed cash-flow sheet less the Qiddiya Balance tab. It deducts Qiddiya opening, inflows, outflows and closing balances only for this liquidity view.';
+  if($('liquidityAsOf')) $('liquidityAsOf').textContent = (rdate?'As at '+rdate+' · ':'')+rptLabel+'Liquid cash available for use is calculated from the ALG-CB consolidated detailed cash-flow sheet less the Qiddiya Balance tab. It deducts Qiddiya opening, inflows, outflows and closing balances only for this liquidity view. VAT recovery benefit/economic benefit is added to restricted Qiddiya cash where applicable.';
   if(!FORECAST_DATA.algCb && $('liquidityAsOf')) $('liquidityAsOf').textContent += ' Note: ALG-CB is not yet detected, so the dashboard is temporarily using the existing group forecast as fallback.';
 
   $('liquidityKpis').innerHTML=[
@@ -1620,7 +1614,7 @@ function renderLiquidityView(){
       ${row('Opening','opening')}
       ${row('Project Qiddiya Inflow','inflows','pos')}
       ${row('Project Qiddiya Outflow','outflows','neg')}
-      ${qiddiyaVatBenefit()?`<tr><td class="rowhead">VAT recovery benefit / economic benefit (B12)</td>${qsum.map((x,i)=>`<td class="num neg">${i===0?fmt(qiddiyaVatBenefit()):fmt(0)}</td>`).join('')}</tr>`:''}
+      ${qiddiyaVatBenefit()?`<tr><td class="rowhead">VAT recovery benefit / economic benefit (B13)</td>${qsum.map((x,i)=>`<td class="num neg">${i===0?fmt(qiddiyaVatBenefit()):fmt(0)}</td>`).join('')}</tr>`:''}
       ${row('Closing','closing')}
     </tbody></table>`;
   }else{
