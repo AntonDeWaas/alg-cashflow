@@ -161,9 +161,6 @@
   /* Version 2: report date and Qiddiya liquidity view */
   .liq-note{font-size:12px;color:var(--ink-soft);margin-top:6px}
   .liq-card .val{font-size:24px}
-  #liquidityKpis{grid-template-columns:repeat(5,1fr)}
-  @media(max-width:1100px){#liquidityKpis{grid-template-columns:repeat(3,1fr)}}
-  @media(max-width:820px){#liquidityKpis{grid-template-columns:repeat(2,1fr)}}
   .comparison-table th{white-space:nowrap}
 
   /* Column view selector for wide treasury reports */
@@ -1215,9 +1212,14 @@ function parseQiddiyaBalance(matrix){
   const inflow=rowByLabel(rows,/^Inflow$/i, headerIdx+1);
   const outflow=rowByLabel(rows,/^Outflow$/i, headerIdx+1);
   const close=rowByLabel(rows,/^Closing/i, headerIdx+1);
-  // B12 on Qiddiya Balance: VAT recovery / economic benefit to be treated as restricted Qiddiya cash
-  // and deducted from available liquidity through the active month Forecast column.
-  const vatBenefit=gsNumber((rows[11]||[])[1])||0;
+  // VAT recovery / economic benefit is read by label so it works whether Apps Script range starts at A1 or A2.
+  // Preferred cell is B13 on the Qiddiya Payable / Qiddiya Balance sheet.
+  const vatRow=rows.find(r=>String(r[0]||'').toLowerCase().includes('vat recovery')) || [];
+  let vatBenefit=gsNumber(vatRow[1]);
+  if(!vatBenefit){
+    // Fallback for legacy layouts where the row index was hard-coded.
+    vatBenefit=gsNumber((rows[12]||[])[1]) || gsNumber((rows[11]||[])[1]) || 0;
+  }
   return {cols, vatBenefit, monthlySummary:cols.map(c=>({
     month:c.label, header:c.header,
     opening:gsNumber(open?.values?.[c.col])||0,
@@ -1534,7 +1536,6 @@ function renderLiquidityView(){
   const last=reportPeriod || (nonZeroAdj.length?nonZeroAdj[nonZeroAdj.length-1]:adjusted[adjusted.length-1]||{});
   const groupCash=Number(last.groupClosing)||0;
   const qiddiyaCash=Number(last.qClosing)||0;
-  const vatBenefit=qiddiyaVatBenefit();
   const liquidCash=Number(last.closing)||0;
   const liquidOpening=liquidityInitialOpening();
   const rdate=(reportInfo&&reportInfo.date)?formatPeriodDate(reportInfo.date):reportDateDisplay();
@@ -1546,7 +1547,6 @@ function renderLiquidityView(){
     ['Liquid Opening Cash',fmt(liquidOpening),'Opening cash excluding Qiddiya',''],
     ['Group Cash incl. Qiddiya',fmt(groupCash),'Reporting date Group position',''],
     ['Less: Qiddiya cash',fmt(qiddiyaCash),'Per Qiddiya Balance tab','neg'],
-    ['VAT Recovery Benefit',fmt(vatBenefit),'Information only · Qiddiya Payable B13','neg'],
     ['Reporting Date Closing',fmt(liquidCash),'Liquid cash available',cls(liquidCash)]
   ].map(k=>`<div class="card kpi liq-card"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
 
@@ -1554,7 +1554,6 @@ function renderLiquidityView(){
     <tr><td class="rowhead">Opening liquid cash excluding Qiddiya</td><td class="num">${fmt(liquidOpening)}</td></tr>
     <tr><td class="rowhead">Group closing cash including Qiddiya at reporting date</td><td class="num">${fmt(groupCash)}</td></tr>
     <tr><td class="rowhead">Less: Qiddiya cash balance at reporting date</td><td class="num neg">${fmt(qiddiyaCash)}</td></tr>
-    <tr><td class="rowhead">VAT recovery benefit / economic benefit (information only)</td><td class="num neg">${fmt(vatBenefit)}</td></tr>
     <tr><td class="rowhead">Reporting date liquid closing cash</td><td class="num ${cls(liquidCash)}">${fmt(liquidCash)}</td></tr>
   </tbody></table>`;
 
@@ -1584,7 +1583,7 @@ function normalizeGooglePayload(json){
   SHEET_IMPORT_NAMES.forEach(name=>{ if(Array.isArray(sheets[name])){ const parsed=parseForecastSheet(name,sheets[name]); if(parsed) entities.push(parsed); } });
   if(!entities.length) throw new Error('No recognised business unit sheets were found in the API response.');
   const dashboardData = parseDashboardSheet(sheets['Dashboard']||sheets['DASHBOARD']||[]);
-  const qiddiyaData = parseQiddiyaBalance(sheets['Qiddiya Balance']||sheets['QIDDIYA BALANCE']||[]);
+  const qiddiyaData = parseQiddiyaBalance(sheets['Qiddiya Balance']||sheets['QIDDIYA BALANCE']||sheets['Qiddiya Payable']||sheets['QIDDIYA PAYABLE']||[]);
   // ALG-CB is the preferred consolidated detailed cash-flow sheet.
   // It should be a total/consolidation of ALPS-CB, ALICLER-CB, SS-CB, OMAN-CB, KSA-CB, ALPS BR-CB and ALPS UZ-CB.
   // The Liquidity Excl. Qiddiya page then deducts only the Qiddiya Balance tab opening/inflow/outflow/closing.
