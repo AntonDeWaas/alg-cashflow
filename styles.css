@@ -1,0 +1,172 @@
+:root{
+    --paper:#F7F4ED; --paper-2:#FFFFFF; --ink:#1B1F1D; --ink-soft:#4A524E;
+    --line:#E2DDD1; --line-2:#D2CBBA; --forest:#0F4C46; --forest-2:#0B3A35;
+    --gold:#B07D2B; --gold-soft:#F2E7CE; --inflow:#0F6E5A; --outflow:#A33A2E;
+    --shadow:0 1px 2px rgba(27,31,29,.05),0 8px 24px rgba(27,31,29,.06);
+    --r:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #fffdf7 0%, transparent 60%),
+      var(--paper);
+    color:var(--ink);
+    font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased;
+  }
+  .num{font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1}
+  h1,h2,h3{font-family:Georgia,"Times New Roman",serif; font-weight:600; letter-spacing:.2px}
+  a{color:var(--forest)}
+  /* layout */
+  header.app{
+    padding:20px 28px 14px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#fffdf7,transparent);
+    display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:baseline; gap:14px}
+  .brand .mark{
+    font-family:Georgia,serif; font-size:13px; letter-spacing:2px; text-transform:uppercase;
+    color:var(--forest); border:1px solid var(--forest); border-radius:6px; padding:4px 8px;
+  }
+  .brand h1{font-size:22px; margin:0}
+  .brand .sub{color:var(--ink-soft); font-size:12px; margin-top:2px}
+  .topctl{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  nav.tabs{display:flex; gap:4px; padding:10px 28px 0; flex-wrap:wrap; border-bottom:1px solid var(--line)}
+  nav.tabs button{
+    background:transparent; border:1px solid transparent; border-bottom:none;
+    padding:9px 16px; font-size:13.5px; cursor:pointer; color:var(--ink-soft);
+    border-radius:8px 8px 0 0; font-weight:600;
+  }
+  nav.tabs button.active{color:var(--forest); background:var(--paper-2); border-color:var(--line); box-shadow:0 -2px 0 var(--gold) inset}
+  nav.tabs button:hover{color:var(--ink)}
+  main{padding:22px 28px 60px; max-width:1180px}
+  .view{display:none; animation:rise .35s ease both}
+  .view.active{display:block}
+  @keyframes rise{from{opacity:0; transform:translateY(8px)}to{opacity:1; transform:none}}
+  /* controls */
+  select,input,button{font-family:inherit; font-size:13.5px; color:var(--ink)}
+  select,input[type=text],input[type=number],input[type=date]{
+    padding:8px 10px; border:1px solid var(--line-2); border-radius:8px; background:var(--paper-2);
+  }
+  input:focus,select:focus{outline:2px solid var(--gold-soft); border-color:var(--gold)}
+  label.fld{display:flex; flex-direction:column; gap:5px; font-size:12px; color:var(--ink-soft); font-weight:600}
+  .btn{
+    background:var(--forest); color:#fff; border:1px solid var(--forest-2); padding:9px 16px;
+    border-radius:8px; cursor:pointer; font-weight:600;
+  }
+  .btn:hover{background:var(--forest-2)}
+  .btn.ghost{background:transparent; color:var(--forest); border-color:var(--line-2)}
+  .btn.ghost:hover{background:#fff}
+  .btn.sm{padding:6px 10px; font-size:12px}
+  .btn.danger{background:#fff; color:var(--outflow); border-color:#e3c4bf}
+  .btn.danger:hover{background:#fdf2f0}
+  /* cards */
+  .grid{display:grid; gap:16px}
+  .kpis{grid-template-columns:repeat(4,1fr); margin-bottom:18px}
+  .card{background:var(--paper-2); border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow)}
+  .kpi{padding:16px 18px}
+  .kpi .lbl{font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--ink-soft); font-weight:700}
+  .kpi .val{font-family:Georgia,serif; font-size:26px; margin-top:6px}
+  .kpi .meta{font-size:11.5px; color:var(--ink-soft); margin-top:4px}
+  .pos{color:var(--inflow)} .neg{color:var(--outflow)}
+  .panel{padding:18px 20px; margin-bottom:18px}
+  .panel h2{font-size:16px; margin:0 0 4px}
+  .panel .hint{color:var(--ink-soft); font-size:12.5px; margin:0 0 14px}
+  .panelhead{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px}
+  .panelhead h2{margin:0}
+  /* tables */
+  table{border-collapse:collapse; width:100%; font-size:13px}
+  th,td{padding:8px 10px; text-align:right; white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  thead th{
+    font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--ink-soft);
+    border-bottom:2px solid var(--line-2); font-weight:700; background:#fbf9f3; position:sticky; top:0;
+  }
+  tbody tr{border-bottom:1px solid var(--line)}
+  tbody tr:hover{background:#fbf9f3}
+  tfoot td{border-top:2px solid var(--line-2); font-weight:700}
+  .tablewrap{overflow:auto; border:1px solid var(--line); border-radius:var(--r); background:var(--paper-2); box-shadow:var(--shadow)}
+  .rowhead{font-weight:600}
+  .muted{color:var(--ink-soft)}
+  .tag{display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; border:1px solid var(--line-2); background:#fbf9f3}
+  .tag.in{color:var(--inflow); border-color:#bfe0d6; background:#eff8f4}
+  .tag.out{color:var(--outflow); border-color:#e8cdc8; background:#fbf1ef}
+  /* entity pills */
+  .pills{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px}
+  .pill{padding:7px 13px; border:1px solid var(--line-2); border-radius:20px; background:var(--paper-2); cursor:pointer; font-weight:600; font-size:12.5px}
+  .pill.active{background:var(--forest); color:#fff; border-color:var(--forest-2)}
+  /* chart */
+  .chart{width:100%; height:230px; display:block}
+  .legend{display:flex; gap:16px; font-size:12px; color:var(--ink-soft); margin-top:6px; flex-wrap:wrap}
+  .legend i{display:inline-block; width:11px; height:11px; border-radius:2px; margin-right:5px; vertical-align:-1px}
+  /* modal */
+  .scrim{position:fixed; inset:0; background:rgba(20,24,22,.42); display:none; align-items:center; justify-content:center; padding:18px; z-index:50}
+  .scrim.show{display:flex}
+  .modal{background:var(--paper); border:1px solid var(--line-2); border-radius:14px; width:min(560px,100%); box-shadow:0 24px 70px rgba(0,0,0,.3); max-height:92vh; overflow:auto}
+  .modal header{padding:16px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center}
+  .modal header h3{margin:0; font-size:17px}
+  .modal .body{padding:18px 20px}
+  .modal .foot{padding:14px 20px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:10px; background:#fbf9f3}
+  .formgrid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .x{background:none; border:none; font-size:20px; cursor:pointer; color:var(--ink-soft); line-height:1}
+  .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px}
+  .spacer{flex:1}
+  .empty{padding:40px 20px; text-align:center; color:var(--ink-soft)}
+  .note{font-size:12px; color:var(--ink-soft); background:#fbf9f3; border:1px dashed var(--line-2); border-radius:8px; padding:10px 12px; margin-top:10px}
+  .stat-strip{display:flex; gap:22px; flex-wrap:wrap; margin-top:4px}
+  .stat-strip div span{display:block}
+  .stat-strip .s-lbl{font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--ink-soft); font-weight:700}
+  .stat-strip .s-val{font-family:Georgia,serif; font-size:18px}
+  @media(max-width:820px){.kpis{grid-template-columns:repeat(2,1fr)} .formgrid{grid-template-columns:1fr} main{padding:18px 14px 60px}}
+
+  /* ALPS-CB forecast sheet */
+  .forecast-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+  .forecast-table th,.forecast-table td{font-size:12px;padding:7px 8px}
+  .forecast-table td:first-child,.forecast-table th:first-child{position:sticky;left:0;background:var(--paper-2);z-index:2;min-width:280px;max-width:360px;white-space:normal}
+  .forecast-table thead th:first-child{z-index:4;background:#fbf9f3}
+  .forecast-table .section td{background:var(--forest);color:#fff;font-weight:700;text-align:left}
+  .forecast-table .section td:first-child{background:var(--forest);color:#fff}
+  .forecast-table .total td{font-weight:700;background:#fbf4e5;border-top:2px solid var(--line-2)}
+  .forecast-table .total td:first-child{background:#fbf4e5}
+  .forecast-table .neg{color:var(--outflow)}
+  .forecast-table .pos{color:var(--inflow)}
+  .widewrap{overflow:auto;max-height:72vh;border:1px solid var(--line);border-radius:var(--r);background:var(--paper-2);box-shadow:var(--shadow)}
+  .mini-note{font-size:12px;color:var(--ink-soft);margin:6px 0 0}
+
+
+  /* Al Laith branding and management dashboard */
+  :root{--alblue:#1E3D73;--alblue-2:#12284F;--algreen:#004B43;--algold:#B08D57;--light:#F5F6F8;--amber:#C98716;--critical:#B3261E}
+  header.app{background:linear-gradient(180deg,#ffffff,#f7f9fb);align-items:center}
+  .brand{align-items:center}
+  .brand-logo{height:58px;width:auto;display:block;object-fit:contain;background:#fff;border-radius:8px;padding:3px 6px;border:1px solid #e6e8ee}
+  .brand h1{color:var(--alblue-2);font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:800;font-size:21px}
+  nav.tabs button.active{color:var(--algreen);box-shadow:0 -2px 0 var(--algold) inset}
+  .exec-hero{background:linear-gradient(135deg,var(--alblue-2),var(--alblue));color:#fff;border:none;box-shadow:var(--shadow);padding:22px 24px;border-radius:14px;margin-bottom:18px;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;align-items:center}
+  .exec-hero h2{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:22px;margin:0 0 6px;font-weight:800}.exec-hero p{margin:0;color:#dbe6f8}.exec-actions{display:flex;gap:8px;flex-wrap:wrap}.exec-actions .btn{background:#fff;color:var(--alblue-2);border-color:#fff}.exec-actions .btn.ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.55)}
+  .status-pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:800;font-size:11px;letter-spacing:.3px}.status-good{background:#eaf7f0;color:#087041;border:1px solid #b7e3ca}.status-watch{background:#fff6e4;color:#8a5600;border:1px solid #efd19d}.status-critical{background:#fdebea;color:#9f1d16;border:1px solid #f0b5b1}
+  .alert-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.alert-card{padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff}.alert-card strong{display:block;font-size:14px}.alert-card .amt{font-family:Georgia,serif;font-size:20px;margin-top:4px}.threshold-input{width:100px;text-align:right}.report-only{display:none}
+  .exec-narrative{font-size:14px;line-height:1.65;color:var(--ink);max-width:980px}
+  .exec-narrative h3{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:var(--alblue-2);font-size:15px;margin:18px 0 8px;font-weight:800}
+  .exec-narrative p{margin:0 0 12px;white-space:pre-wrap}
+  .exec-narrative ol,.exec-narrative ul{margin:8px 0 14px 22px;padding:0}.exec-narrative li{margin:6px 0}
+  @media(max-width:900px){.alert-grid{grid-template-columns:1fr}.brand-logo{height:46px}}
+  @media print{nav.tabs,.topctl,.exec-actions,.btn,.toolbar,.forecast-tools{display:none!important}body{background:#fff}.view{display:block!important}.view:not(#view-executive){display:none!important}.card,.exec-hero{box-shadow:none}.report-only{display:block}.exec-hero{color:#111;background:#fff;border:1px solid #ddd}}
+
+
+  /* Version 2: report date and Qiddiya liquidity view */
+  .liq-note{font-size:12px;color:var(--ink-soft);margin-top:6px}
+  .liq-card .val{font-size:24px}
+  #liquidityKpis{grid-template-columns:repeat(5,1fr)}
+  @media(max-width:1100px){#liquidityKpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:820px){#liquidityKpis{grid-template-columns:repeat(2,1fr)}}
+  .comparison-table th{white-space:nowrap}
+
+  /* Column view selector for wide treasury reports */
+  .view-mode-controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
+  .view-mode-controls select{min-width:220px}
+  .sticky-report th:first-child,.sticky-report td:first-child{position:sticky;left:0;background:var(--paper-2);z-index:2;min-width:280px;max-width:380px;white-space:normal}
+  .sticky-report thead th:first-child{z-index:5;background:#fbf9f3}
+  .sticky-report .section td{background:var(--forest)!important;color:#fff;font-weight:700;text-align:left}
+  .sticky-report .total td{font-weight:700;background:#fbf4e5;border-top:2px solid var(--line-2)}
+  .sticky-report .total td:first-child{background:#fbf4e5}
