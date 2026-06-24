@@ -1,5 +1,5 @@
 var DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
-var SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB'];
+var SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB','Bank Balance'];
 var DASHBOARD_DATA = null;
 var QIDDIYA_DATA = null;
 /* ---------------- storage layer (window.storage with in-memory fallback) ------------- */
