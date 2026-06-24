@@ -34,6 +34,10 @@
   <button data-view="entity">By Business Unit</button>
   <button data-view="ledger">Transactions</button>
   <button data-view="settings">Settings &amp; Data</button>
+  <button data-view="bank-balance">Bank Balance</button>
+<button data-view="pdc-issued">PDC Issued</button>
+<button data-view="bank-loan">Bank Loans</button>
+<button data-view="intercompany">Intercompany</button>
 </nav>
 
 <main>
@@ -311,6 +315,45 @@
       <div class="note" id="storageNote"></div>
     </div>
   </section>
+  <!-- TREASURY - BANK BALANCE -->
+<section class="view" id="view-bank-balance">
+  <div class="card panel">
+    <div class="panelhead">
+      <h2>Bank Balance</h2>
+    </div>
+    <div class="tablewrap" id="bankBalanceContent"></div>
+  </div>
+</section>
+
+<!-- TREASURY - PDC ISSUED -->
+<section class="view" id="view-pdc-issued">
+  <div class="card panel">
+    <div class="panelhead">
+      <h2>PDC Issued</h2>
+    </div>
+    <div class="tablewrap" id="pdcIssuedContent"></div>
+  </div>
+</section>
+
+<!-- TREASURY - BANK LOANS -->
+<section class="view" id="view-bank-loan">
+  <div class="card panel">
+    <div class="panelhead">
+      <h2>Bank Loans</h2>
+    </div>
+    <div class="tablewrap" id="bankLoanContent"></div>
+  </div>
+</section>
+
+<!-- TREASURY - INTERCOMPANY -->
+<section class="view" id="view-intercompany">
+  <div class="card panel">
+    <div class="panelhead">
+      <h2>Intercompany</h2>
+    </div>
+    <div class="tablewrap" id="intercompanyContent"></div>
+  </div>
+</section>
 </main>
 
 <!-- MODAL -->
