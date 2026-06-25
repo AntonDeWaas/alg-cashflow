@@ -242,3 +242,77 @@
   background: #fdeeee;
   color: #7f1d1d;
 }
+/* Bank Balance polish */
+.bank-balance-tablewrap {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.bank-balance-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 1200px;
+  width: max-content;
+}
+
+.bank-balance-table th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f8f4ec;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bank-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #fffaf2 !important;
+  min-width: 260px;
+  font-weight: 800;
+}
+
+.bank-balance-table th.bank-sticky-col {
+  z-index: 6;
+  background: #f8f4ec !important;
+}
+
+.bank-section-row td {
+  background: #eaf3f6 !important;
+  color: #003b5c;
+  font-weight: 900;
+}
+
+.bank-total-row td {
+  background: #0b3b5a !important;
+  color: #ffffff !important;
+  font-weight: 900;
+  border-top: 2px solid #8a6d2f;
+}
+
+.bank-net-row td {
+  background: #eef8ef !important;
+  color: #0f5132;
+  font-weight: 800;
+}
+
+.bank-difference-row td {
+  background: #fff2cc !important;
+  color: #7a4b00;
+  font-weight: 800;
+}
+
+.bank-deduction-row td {
+  background: #fff7f2 !important;
+  color: #9b2c2c;
+  font-weight: 700;
+}
+
+.current-period-col {
+  background: #dff5ea !important;
+  font-weight: 900;
+  box-shadow: inset 0 0 0 1px #0f7a4f;
+}
