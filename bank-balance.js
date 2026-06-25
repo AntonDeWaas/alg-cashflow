@@ -1,7 +1,30 @@
-// Bank balance dashboard module
-// Placeholder module. This file is intentionally separated so the report can be added later
-// without changing the cash-flow or liquidity modules.
+function renderBankBalance() {
+  const el = document.getElementById('bankBalanceContent');
+  if (!el) return;
+
+  const data = window.BANK_BALANCE_DATA || [];
+
+  if (!data.length) {
+    el.innerHTML = '<div class="empty">No Bank Balance data loaded. Click Refresh Google Sheet first.</div>';
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="note">Bank Balance data loaded from Google Sheet.</div>
+    <table>
+      <tbody>
+        ${data.map(row => `
+          <tr>
+            ${row.map(cell => `<td>${cell ?? ''}</td>`).join('')}
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
 window.BANK_BALANCE_MODULE = {
-  title: 'Bank balance dashboard module',
-  status: 'planned'
+  title: 'Bank Balance',
+  status: 'active',
+  render: renderBankBalance
 };
