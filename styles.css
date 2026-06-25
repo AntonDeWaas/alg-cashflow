@@ -170,3 +170,75 @@
   .sticky-report .section td{background:var(--forest)!important;color:#fff;font-weight:700;text-align:left}
   .sticky-report .total td{font-weight:700;background:#fbf4e5;border-top:2px solid var(--line-2)}
   .sticky-report .total td:first-child{background:#fbf4e5}
+.bank-balance-tablewrap {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.bank-balance-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 1200px;
+}
+
+.bank-balance-table th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f8f4ec;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bank-balance-table thead tr:nth-child(2) th {
+  top: 34px;
+}
+
+.bank-balance-table td,
+.bank-balance-table th {
+  border-bottom: 1px solid #e5dccd;
+  padding: 8px 10px;
+}
+
+.bank-balance-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bank-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #fffaf2;
+  min-width: 210px;
+  font-weight: 600;
+}
+
+.bank-section-row td {
+  background: #eef3f6;
+  font-weight: 700;
+  color: #0b3558;
+}
+
+.bank-total-row td {
+  background: #e8f3ef;
+  font-weight: 800;
+  color: #064e3b;
+}
+
+.bank-net-row td {
+  background: #dff5ec;
+  font-weight: 800;
+  color: #065f46;
+}
+
+.bank-difference-row td {
+  background: #fff4df;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.bank-deduction-row td {
+  background: #fdeeee;
+  color: #7f1d1d;
+}
