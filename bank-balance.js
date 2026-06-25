@@ -2,38 +2,56 @@ function bankBalanceIsBlank(value) {
   return String(value ?? '').trim() === '';
 }
 
+function bankBalanceNumber(value) {
+  const text = String(value ?? '').replace(/,/g, '').trim();
+  const num = Number(text);
+  return isNaN(num) ? 0 : num;
+}
+
 function bankBalanceFormat(value) {
   const text = String(value ?? '').trim();
   if (text === '') return '';
-
-  const num = Number(text.replace(/,/g, ''));
+  const num = bankBalanceNumber(text);
   if (!isNaN(num) && text.match(/^-?[\d,]+(\.\d+)?$/)) {
     return Math.round(num).toLocaleString();
   }
-
   return text;
 }
 
 function bankBalanceRowClass(label) {
-  const text = String(label || '').toLowerCase();
+  const text = String(label || '').toLowerCase().trim();
 
   if (text.includes('total balance')) return 'bank-total-row';
   if (text.includes('net cash balance')) return 'bank-net-row';
   if (text.includes('difference')) return 'bank-difference-row';
   if (text.includes('less:')) return 'bank-deduction-row';
 
-  const bankNames = ['enbd', 'adcb', 'sohar', 'snb', 'kdb'];
-  if (bankNames.includes(text.trim())) return 'bank-section-row';
+  const bankNames = ['enbd', 'adcb', 'sohar intl', 'snb bank', 'kdb'];
+  if (bankNames.includes(text)) return 'bank-section-row';
 
   return '';
 }
 
+function bankBalanceReportDate() {
+  const saved = localStorage.getItem('cf_report_date') || '';
+  if (!saved) return new Date();
+
+  const parsed = new Date(saved + 'T00:00:00');
+  if (!isNaN(parsed)) return parsed;
+
+  return new Date();
+}
+
 function bankBalanceCurrentIndexes(months, periods) {
   const indexes = [0];
-  const today = new Date();
-  const currentMonth = today.toLocaleString('en-US', { month: 'short' });
-  const currentYear = String(today.getFullYear()).slice(-2);
+  const reportDate = bankBalanceReportDate();
+
+  const currentMonth = reportDate.toLocaleString('en-US', { month: 'short' });
+  const currentYear = String(reportDate.getFullYear()).slice(-2);
   const currentMonthKey = `${currentMonth}-${currentYear}`;
+
+  let currentWeekIndex = -1;
+  let currentTotIndex = -1;
 
   for (let i = 1; i < months.length; i++) {
     const month = String(months[i] || '').trim();
@@ -42,13 +60,57 @@ function bankBalanceCurrentIndexes(months, periods) {
     if (!month) continue;
 
     if (month === currentMonthKey) {
-      indexes.push(i);
-    } else if (period === 'TOT' || period === 'FORECAST') {
-      indexes.push(i);
+      if (period === 'TOT') {
+        currentTotIndex = i;
+      } else if (period !== 'FORECAST') {
+        currentWeekIndex = i;
+      }
     }
   }
 
+  for (let i = 1; i < months.length; i++) {
+    const month = String(months[i] || '').trim();
+    const period = String(periods[i] || '').trim().toUpperCase();
+
+    if (!month) continue;
+
+    if (month === currentMonthKey) {
+      if (i === currentWeekIndex) indexes.push(i);
+    } else {
+      if (period === 'TOT') indexes.push(i);
+    }
+  }
+
+  if (currentWeekIndex === -1 && currentTotIndex !== -1) {
+    indexes.push(currentTotIndex);
+  }
+
   return indexes;
+}
+
+function bankBalanceBuildSummary(bodyRows, selectedIndexes) {
+  const banks = ['ENBD', 'ADCB', 'SOHAR INTL', 'SNB BANK', 'KDB'];
+  const summary = [];
+
+  for (let r = 0; r < bodyRows.length; r++) {
+    const label = String(bodyRows[r][0] || '').trim();
+    if (!banks.includes(label)) continue;
+
+    const nextBankIndex = bodyRows.findIndex((row, idx) =>
+      idx > r && banks.includes(String(row[0] || '').trim())
+    );
+
+    const end = nextBankIndex === -1 ? bodyRows.length : nextBankIndex;
+    const rows = bodyRows.slice(r + 1, end);
+
+    const totals = selectedIndexes.slice(1).map(i =>
+      rows.reduce((sum, row) => sum + bankBalanceNumber(row[i]), 0)
+    );
+
+    summary.push({ bank: label, totals });
+  }
+
+  return summary;
 }
 
 function renderBankBalance() {
@@ -83,7 +145,7 @@ function renderBankBalance() {
   if (viewMode === 'monthly') {
     for (let i = 1; i < headerMonths.length; i++) {
       const period = String(headerPeriods[i] || '').trim().toUpperCase();
-      if (period === 'TOT' || period === 'FORECAST') selectedIndexes.push(i);
+      if (period === 'TOT') selectedIndexes.push(i);
     }
   }
 
@@ -91,7 +153,16 @@ function renderBankBalance() {
     selectedIndexes = bankBalanceCurrentIndexes(headerMonths, headerPeriods);
   }
 
-  const tableRows = bodyRows
+  const summary = bankBalanceBuildSummary(bodyRows, selectedIndexes);
+
+  const summaryRows = summary.map(item => `
+    <tr>
+      <td class="bank-sticky-col">${item.bank}</td>
+      ${item.totals.map(v => `<td class="num">${bankBalanceFormat(v)}</td>`).join('')}
+    </tr>
+  `).join('');
+
+  const detailRows = bodyRows
     .filter(row => selectedIndexes.some(i => !bankBalanceIsBlank(row[i])))
     .map(row => {
       const label = row[0] || '';
@@ -120,9 +191,25 @@ function renderBankBalance() {
     </div>
 
     <div class="note">
-      Current view shows completed months as total, the current month by week, and future months as total/forecast.
+      Current view uses the reporting date from Settings & Data. Completed months show TOT, the current month shows the current week, and future months show TOT.
     </div>
 
+    <h3>Bank Summary</h3>
+    <div class="tablewrap bank-balance-tablewrap">
+      <table class="bank-balance-table">
+        <thead>
+          <tr>
+            <th class="bank-sticky-col">Bank</th>
+            ${selectedIndexes.slice(1).map(i => `<th>${bankBalanceFormat(headerMonths[i])}<br>${bankBalanceFormat(headerPeriods[i])}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${summaryRows}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Bank Balance Detail</h3>
     <div class="tablewrap bank-balance-tablewrap">
       <table class="bank-balance-table">
         <thead>
@@ -142,7 +229,7 @@ function renderBankBalance() {
           </tr>
         </thead>
         <tbody>
-          ${tableRows}
+          ${detailRows}
         </tbody>
       </table>
     </div>
