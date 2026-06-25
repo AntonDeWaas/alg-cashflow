@@ -9,17 +9,61 @@ function renderBankBalance() {
     return;
   }
 
+  const cleanRows = data.filter(row => row.some(cell => String(cell || '').trim() !== ''));
+
+  const headerMonths = cleanRows[0] || [];
+  const headerPeriods = cleanRows[1] || [];
+  const bodyRows = cleanRows.slice(2);
+
+  const viewMode = document.getElementById('bankBalanceViewMode')?.value || 'weekly';
+
+  let selectedIndexes = [0];
+
+  for (let i = 1; i < headerMonths.length; i++) {
+    const period = String(headerPeriods[i] || '').trim().toUpperCase();
+
+    if (viewMode === 'monthly') {
+      if (period === 'TOT' || period === 'FORECAST') selectedIndexes.push(i);
+    } else {
+      selectedIndexes.push(i);
+    }
+  }
+
+  const tableRows = bodyRows
+    .filter(row => selectedIndexes.some(i => String(row[i] || '').trim() !== ''))
+    .map(row => `
+      <tr>
+        ${selectedIndexes.map(i => `<td>${row[i] ?? ''}</td>`).join('')}
+      </tr>
+    `).join('');
+
   el.innerHTML = `
+    <div class="toolbar">
+      <label class="fld">View
+        <select id="bankBalanceViewMode" onchange="renderBankBalance()">
+          <option value="weekly" ${viewMode === 'weekly' ? 'selected' : ''}>Weekly detail</option>
+          <option value="monthly" ${viewMode === 'monthly' ? 'selected' : ''}>Monthly total only</option>
+        </select>
+      </label>
+    </div>
+
     <div class="note">Bank Balance data loaded from Google Sheet.</div>
-    <table>
-      <tbody>
-        ${data.map(row => `
+
+    <div class="tablewrap">
+      <table>
+        <thead>
           <tr>
-            ${row.map(cell => `<td>${cell ?? ''}</td>`).join('')}
+            ${selectedIndexes.map(i => `<th>${headerMonths[i] ?? ''}</th>`).join('')}
           </tr>
-        `).join('')}
-      </tbody>
-    </table>
+          <tr>
+            ${selectedIndexes.map(i => `<th>${headerPeriods[i] ?? ''}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
