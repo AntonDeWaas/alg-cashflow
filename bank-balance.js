@@ -214,31 +214,43 @@
 }
 
   function renderDetail(bodyRows, months, periods, cols) {
-    return `
-      <h3>Bank Balance Detail</h3>
-      <div class="tablewrap bank-balance-tablewrap">
-        <table class="bank-balance-table">
-          <thead>
-            <tr>
-              ${cols.map((i, idx) => `<th class="${idx === 0 ? 'bank-sticky-col' : ''}">${fmt(months[i])}</th>`).join('')}
-            </tr>
-            <tr>
-              ${cols.map((i, idx) => `<th class="${idx === 0 ? 'bank-sticky-col' : ''}">${fmt(periods[i])}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${bodyRows
-              .filter(row => cols.some(i => !isBlank(row[i])))
-              .map(row => `
-                <tr class="${rowClass(row[0])}">
-                  ${cols.map((i, idx) => `<td class="${idx === 0 ? 'bank-sticky-col' : 'num'}">${fmt(row[i])}</td>`).join('')}
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
+  return `
+    <h3>Bank Balance Detail</h3>
+    <div class="tablewrap bank-balance-tablewrap">
+      <table class="bank-balance-table">
+        <thead>
+          <tr>
+            ${cols.map((i, idx) => `
+              <th class="${idx === 0 ? 'bank-sticky-col' : ''} ${isCurrentColumn(months[i], periods[i]) ? 'current-period-col' : ''}">
+                ${fmt(months[i])}
+              </th>
+            `).join('')}
+          </tr>
+          <tr>
+            ${cols.map((i, idx) => `
+              <th class="${idx === 0 ? 'bank-sticky-col' : ''} ${isCurrentColumn(months[i], periods[i]) ? 'current-period-col' : ''}">
+                ${fmt(periods[i])}
+              </th>
+            `).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${bodyRows
+            .filter(row => cols.some(i => !isBlank(row[i])))
+            .map(row => `
+              <tr class="${rowClass(row[0])}">
+                ${cols.map((i, idx) => `
+                  <td class="${idx === 0 ? 'bank-sticky-col' : 'num'} ${isCurrentColumn(months[i], periods[i]) ? 'current-period-col' : ''}">
+                    ${fmt(row[i])}
+                  </td>
+                `).join('')}
+              </tr>
+            `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
 
   function renderBankBalance() {
     const el = document.getElementById('bankBalanceContent');
