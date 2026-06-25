@@ -93,19 +93,50 @@
     return '';
   }
     function currentIndexes(months, periods, viewMode) {
+  const indexes = [0];
+  const report = reportDate();
+  const reportDateText = report.toLocaleDateString('en-GB');
+  const currentMonth = reportMonthKey(report);
 
-    const indexes = [0];
-
-    if (viewMode === 'weekly') {
-
-      for (let i = 1; i < months.length; i++) {
-        if (!isBlank(months[i]) || !isBlank(periods[i])) {
-          indexes.push(i);
-        }
-      }
-
-      return indexes;
+  if (viewMode === 'weekly') {
+    for (let i = 1; i < months.length; i++) {
+      if (!isBlank(months[i]) || !isBlank(periods[i])) indexes.push(i);
     }
+    return indexes;
+  }
+
+  if (viewMode === 'monthly') {
+    for (let i = 1; i < months.length; i++) {
+      const period = cleanText(periods[i]).toUpperCase();
+      if (period === 'TOT') indexes.push(i);
+    }
+    return indexes;
+  }
+
+  let currentWeekIndex = -1;
+
+  for (let i = 1; i < months.length; i++) {
+    if (cleanText(months[i]) === currentMonth && cleanText(periods[i]) === reportDateText) {
+      currentWeekIndex = i;
+      break;
+    }
+  }
+
+  for (let i = 1; i < months.length; i++) {
+    const month = cleanText(months[i]);
+    const period = cleanText(periods[i]).toUpperCase();
+
+    if (!month) continue;
+
+    if (month === currentMonth) {
+      if (i === currentWeekIndex) indexes.push(i);
+    } else if (period === 'TOT') {
+      indexes.push(i);
+    }
+  }
+
+  return indexes;
+}
 
     const report = reportDate();
     const currentMonth = reportMonthKey(report);
