@@ -1309,7 +1309,6 @@ function refreshAll(){
     window.BANK_BALANCE_MODULE.render();
   }
 }
-}
 
 /* ---------------- view switching ---------------- */
 $('nav').addEventListener('click',e=>{
