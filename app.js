@@ -1092,7 +1092,8 @@ function normalizeGooglePayload(json){
     algCb,
     exeSummary:parseExeSummary(sheets['Exe Sum']||sheets['EXE SUM']||[]),
     dashboardData,
-    qiddiyaData
+    qiddiyaData,
+    bankBalanceData: sheets['Bank Balance'] || []
   };
 }
 function loadJsonp(url){
@@ -1117,6 +1118,7 @@ async function refreshFromGoogleSheet(){
     Object.assign(FORECAST_DATA, normalized);
     DASHBOARD_DATA = normalized.dashboardData || null;
     QIDDIYA_DATA = normalized.qiddiyaData || null;
+    window.BANK_BALANCE_DATA = normalized.bankBalanceData || [];
     if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)) currentForecastSheet='GROUP';
     setGoogleNotes('Updated from Google Sheet at '+new Date().toLocaleString());
     refreshAll();
