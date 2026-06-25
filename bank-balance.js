@@ -90,16 +90,7 @@
       const pu = p.toUpperCase();
 
       if (!(m === reportMonth || m.startsWith(reportMonth.slice(0, 3)))) continue;
-
-console.log('BANK BALANCE HEADER CHECK', {
-  column: i,
-  month: m,
-  period: p,
-  reportMonth: reportMonth,
-  reportDate: reportDate.toLocaleDateString('en-GB')
-});
-
-   
+ 
       if (pu === 'TOT') currentTot = i;
       else if (pu !== 'FORECAST') {
         fallback = i;
@@ -161,29 +152,66 @@ console.log('BANK BALANCE HEADER CHECK', {
     return summary;
   }
 
+  function isCurrentColumn(month, period) {
+  const reportDate = getReportDate();
+  const reportMonth = monthKey(reportDate);
+  const m = txt(month);
+  const p = txt(period);
+  const d = parseDate(p);
+
+  return (
+    (m === reportMonth || m.startsWith(reportMonth.slice(0, 3))) &&
+    d &&
+    sameDate(d, reportDate)
+  );
+}
+  
   function renderSummary(summary, months, periods, cols) {
-    return `
-      <h3>Bank Summary</h3>
-      <div class="tablewrap bank-balance-tablewrap bank-summary-wrap">
-        <table class="bank-balance-table">
-          <thead>
-            <tr>
-              <th class="bank-sticky-col">Bank</th>
-              ${cols.slice(1).map(i => `<th>${fmt(months[i])}<br>${fmt(periods[i])}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${summary.map(r => `
-              <tr class="bank-summary-row">
-                <td class="bank-sticky-col">${r.bank}</td>
-                ${r.totals.map(v => `<td class="num">${fmt(v)}</td>`).join('')}
-              </tr>
+  const dataCols = cols.slice(1);
+
+  const totalRow = dataCols.map((_, colIndex) =>
+    summary.reduce((sum, bank) => sum + num(bank.totals[colIndex]), 0)
+  );
+
+  return `
+    <h3>Bank Summary</h3>
+    <div class="tablewrap bank-balance-tablewrap bank-summary-wrap">
+      <table class="bank-balance-table">
+        <thead>
+          <tr>
+            <th class="bank-sticky-col">Bank</th>
+            ${dataCols.map(i => `
+              <th class="${isCurrentColumn(months[i], periods[i]) ? 'current-period-col' : ''}">
+                ${fmt(months[i])}<br>${fmt(periods[i])}
+              </th>
             `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.map(r => `
+            <tr class="bank-summary-row">
+              <td class="bank-sticky-col">${r.bank}</td>
+              ${r.totals.map((v, idx) => `
+                <td class="num ${isCurrentColumn(months[dataCols[idx]], periods[dataCols[idx]]) ? 'current-period-col' : ''}">
+                  ${fmt(v)}
+                </td>
+              `).join('')}
+            </tr>
+          `).join('')}
+
+          <tr class="bank-total-row">
+            <td class="bank-sticky-col">TOTAL BANK BALANCE</td>
+            ${totalRow.map((v, idx) => `
+              <td class="num ${isCurrentColumn(months[dataCols[idx]], periods[dataCols[idx]]) ? 'current-period-col' : ''}">
+                ${fmt(v)}
+              </td>
+            `).join('')}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
 
   function renderDetail(bodyRows, months, periods, cols) {
     return `
