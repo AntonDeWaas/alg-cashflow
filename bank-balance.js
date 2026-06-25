@@ -44,14 +44,27 @@ function bankBalanceReportDate() {
 
 function bankBalanceCurrentIndexes(months, periods) {
   const indexes = [0];
-  const reportDate = bankBalanceReportDate();
 
-  const currentMonth = reportDate.toLocaleString('en-US', { month: 'short' });
-  const currentYear = String(reportDate.getFullYear()).slice(-2);
-  const currentMonthKey = `${currentMonth}-${currentYear}`;
+  const saved = localStorage.getItem('cf_report_date') || '';
+  const reportDate = saved ? new Date(saved + 'T00:00:00') : new Date();
+
+  const reportMonth = reportDate.toLocaleString('en-US', { month: 'short' });
+  const reportYear = String(reportDate.getFullYear()).slice(-2);
+  const reportMonthKey = `${reportMonth}-${reportYear}`;
+
+  const reportDateText = reportDate.toLocaleDateString('en-GB');
 
   let currentWeekIndex = -1;
-  let currentTotIndex = -1;
+
+  for (let i = 1; i < months.length; i++) {
+    const month = String(months[i] || '').trim();
+    const period = String(periods[i] || '').trim();
+
+    if (month === reportMonthKey && period === reportDateText) {
+      currentWeekIndex = i;
+      break;
+    }
+  }
 
   for (let i = 1; i < months.length; i++) {
     const month = String(months[i] || '').trim();
@@ -59,14 +72,15 @@ function bankBalanceCurrentIndexes(months, periods) {
 
     if (!month) continue;
 
-    if (month === currentMonthKey) {
-      if (period === 'TOT') {
-        currentTotIndex = i;
-      } else if (period !== 'FORECAST') {
-        currentWeekIndex = i;
-      }
+    if (month === reportMonthKey) {
+      if (i === currentWeekIndex) indexes.push(i);
+    } else {
+      if (period === 'TOT') indexes.push(i);
     }
   }
+
+  return indexes;
+}
 
   for (let i = 1; i < months.length; i++) {
     const month = String(months[i] || '').trim();
@@ -159,11 +173,8 @@ function renderBankBalance() {
   }
 
   if (viewMode === 'monthly') {
-    for (let i = 1; i < headerMonths.length; i++) {
-      const period = String(headerPeriods[i] || '').trim().toUpperCase();
-      if (period === 'TOT') selectedIndexes.push(i);
-    }
-  }
+  selectedIndexes = bankBalanceCurrentIndexes(headerMonths, headerPeriods);
+}
 
   if (viewMode === 'current') {
     selectedIndexes = bankBalanceCurrentIndexes(headerMonths, headerPeriods);
