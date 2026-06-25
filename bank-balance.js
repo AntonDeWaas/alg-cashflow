@@ -90,18 +90,34 @@ function bankBalanceCurrentIndexes(months, periods) {
 
 function bankBalanceBuildSummary(bodyRows, selectedIndexes) {
   const banks = ['ENBD', 'ADCB', 'SOHAR INTL', 'SNB BANK', 'KDB'];
+  const stopLabels = [
+    'TOTAL BALANCE',
+    'GROUP CASH FLOW BALANCE',
+    'DIFFERENCE',
+    'NET CASH BALANCE',
+    'UAE',
+    'SAUDI',
+    'OMAN',
+    'UZBEK'
+  ];
+
   const summary = [];
 
   for (let r = 0; r < bodyRows.length; r++) {
-    const label = String(bodyRows[r][0] || '').trim();
+    const label = String(bodyRows[r][0] || '').trim().toUpperCase();
     if (!banks.includes(label)) continue;
 
-    const nextBankIndex = bodyRows.findIndex((row, idx) =>
-      idx > r && banks.includes(String(row[0] || '').trim())
-    );
+    const rows = [];
 
-    const end = nextBankIndex === -1 ? bodyRows.length : nextBankIndex;
-    const rows = bodyRows.slice(r + 1, end);
+    for (let x = r + 1; x < bodyRows.length; x++) {
+      const nextLabel = String(bodyRows[x][0] || '').trim().toUpperCase();
+
+      if (banks.includes(nextLabel)) break;
+      if (stopLabels.includes(nextLabel)) break;
+      if (nextLabel.startsWith('LESS:')) break;
+
+      rows.push(bodyRows[x]);
+    }
 
     const totals = selectedIndexes.slice(1).map(i =>
       rows.reduce((sum, row) => sum + bankBalanceNumber(row[i]), 0)
