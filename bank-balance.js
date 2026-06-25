@@ -89,7 +89,7 @@
       const p = txt(periods[i]);
       const pu = p.toUpperCase();
 
-      if (m !== reportMonth) continue;
+      if (!(m === reportMonth || m.startsWith(reportMonth.slice(0, 3)))) continue;
 
 console.log('BANK BALANCE HEADER CHECK', {
   column: i,
