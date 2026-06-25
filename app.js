@@ -1297,7 +1297,18 @@ function syncControls(){
   fillEntitySelectors(); fillCategorySelectors();
 }
 function refreshAll(){
-  renderDashboard(); renderLiquidityView(); renderAlpsCB(); renderExecutiveSummary(); renderEntity(); renderLedger(); renderSettings();
+  renderDashboard(); 
+  renderLiquidityView(); 
+  renderAlpsCB(); 
+  renderExecutiveSummary(); 
+  renderEntity(); 
+  renderLedger(); 
+  renderSettings();
+
+  if (window.BANK_BALANCE_MODULE && typeof window.BANK_BALANCE_MODULE.render === 'function') {
+    window.BANK_BALANCE_MODULE.render();
+  }
+}
 }
 
 /* ---------------- view switching ---------------- */
