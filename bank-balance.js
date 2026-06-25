@@ -91,6 +91,15 @@
 
       if (m !== reportMonth) continue;
 
+console.log('BANK BALANCE HEADER CHECK', {
+  column: i,
+  month: m,
+  period: p,
+  reportMonth: reportMonth,
+  reportDate: reportDate.toLocaleDateString('en-GB')
+});
+
+   
       if (pu === 'TOT') currentTot = i;
       else if (pu !== 'FORECAST') {
         fallback = i;
