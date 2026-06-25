@@ -119,7 +119,7 @@ console.log('BANK BALANCE HEADER CHECK', {
 
       if (!m) continue;
 
-      if (m === reportMonth) {
+      if (m === reportMonth || m.startsWith(reportMonth.slice(0, 3))) {
         if (i === currentWeek) indexes.push(i);
       } else if (p === 'TOT') {
         indexes.push(i);
