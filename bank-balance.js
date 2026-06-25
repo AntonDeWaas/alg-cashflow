@@ -72,11 +72,13 @@
     }
 
     if (mode === 'monthly') {
-      for (let i = 1; i < months.length; i++) {
-        if (txt(periods[i]).toUpperCase() === 'TOT') indexes.push(i);
-      }
-      return indexes;
-    }
+  // Monthly Total Only behaves like Current Reporting View,
+  // but hides the weekly history and shows only:
+  // - Completed months = TOT
+  // - Current month = current reporting week
+  // - Future months = TOT
+  mode = 'current';
+}
 
     let currentWeek = -1;
     let fallback = -1;
