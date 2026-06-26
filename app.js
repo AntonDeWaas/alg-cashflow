@@ -1044,16 +1044,17 @@ function groupCashAtReportingDate(){
   return match ? Number(match.cashFlowClosing) || null : null;
 }
 function qiddiyaCashAtReportingDate(){
-    const qd = FORECAST_DATA.qiddiyaData || QIDDIYA_DATA;
-    const rpt = reportDateDisplay();
+  const qd = FORECAST_DATA.qiddiyaData || {};
+  const rpt = reportDateDisplay();
 
-    if (!qd.monthlySummary || !rpt) return null;
+  if (!qd.monthlySummary || !rpt) return null;
 
-    const match = qd.monthlySummary.find(x =>
-        cleanText(x.period || '') === cleanText(rpt)
-    );
+  const match = qd.monthlySummary.find(x =>
+    cleanText(x.header || '') === cleanText('Jun W3') ||
+    cleanText(x.period || '') === cleanText(rpt)
+  );
 
-    return match ? Number(match.cashFlowClosing) || null : null;
+  return match ? Number(match.closing) || null : null;
 }
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
