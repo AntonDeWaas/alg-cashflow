@@ -1031,6 +1031,33 @@ function liquidityDetailRows(){
   addRow('Estimated Cash Balance Closing', adjusted.map(x=>x.closing), 'total');
   return rows;
 }
+function groupCashAtReportingDate(){
+  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods = group.periods || [];
+  const rptDate = parsePeriodDate(reportDateDisplay());
+
+  if (!periods.length || !rptDate) return null;
+
+  let idx = -1;
+
+  periods.forEach((p, i) => {
+    const dt = parsePeriodDate(p.period || p.key || '');
+    if (!dt) return;
+
+    if (
+      dt.getFullYear() === rptDate.getFullYear() &&
+      dt.getMonth() === rptDate.getMonth() &&
+      dt.getDate() === rptDate.getDate()
+    ) {
+      idx = i;
+    }
+  });
+
+  if (idx < 0) return null;
+
+  const vals = groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
+return Number(vals[idx]) || null;
+}
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
@@ -1039,7 +1066,7 @@ function renderLiquidityView(){
   const reportPeriod=reportInfo ? liquidityAtPeriodIndex(reportInfo.index) : null;
   const nonZeroAdj=adjusted.filter(x=>Number(x.groupClosing)!==0 || Number(x.qClosing)!==0 || Number(x.closing)!==0);
   const last=reportPeriod || (nonZeroAdj.length?nonZeroAdj[nonZeroAdj.length-1]:adjusted[adjusted.length-1]||{});
-  const groupCash=Number(last.groupClosing)||0;
+  const groupCash = groupCashAtReportingDate() || Number(last.groupClosing) || 0;
   const qiddiyaCashByDate = qiddiyaCashAtReportingDate();
 const qiddiyaCash = qiddiyaCashByDate !== null ? qiddiyaCashByDate : (Number(last.qClosing)||0);
   const vatBenefit=qiddiyaVatDisplayBenefit();
