@@ -1032,16 +1032,15 @@ function liquidityDetailRows(){
   return rows;
 }
 function groupCashAtReportingDate(){
-  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
-  const periods = group.periods || [];
+  const qd = FORECAST_DATA.qiddiyaData || QIDDIYA_DATA;
   const rptDate = parsePeriodDate(reportDateDisplay());
 
-  if (!periods.length || !rptDate) return null;
+  if (!qd || !qd.periods || !qd.rows || !rptDate) return null;
 
   let idx = -1;
 
-  periods.forEach((p, i) => {
-    const dt = parsePeriodDate(p.period || p.key || '');
+  (qd.periods || []).forEach((p, i) => {
+    const dt = parsePeriodDate(p.period || p.key || p.header || '');
     if (!dt) return;
 
     if (
@@ -1052,6 +1051,17 @@ function groupCashAtReportingDate(){
       idx = i;
     }
   });
+
+  if (idx < 0) return null;
+
+  const row = (qd.rows || []).find(r =>
+    /^Cash Flow Closing$/i.test(cleanText(r.label || ''))
+  );
+
+  if (!row) return null;
+
+  return Number((row.values || [])[idx]) || null;
+}
 
   if (idx < 0) return null;
 
