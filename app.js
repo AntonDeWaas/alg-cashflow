@@ -1032,16 +1032,36 @@ function liquidityDetailRows(){
   return rows;
 }
 function groupCashAtReportingDate(){
-  const qd = FORECAST_DATA.qiddiyaData || {};
-  const rpt = reportDateDisplay();
+  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods = group.periods || [];
+  const rptDate = parsePeriodDate(reportDateDisplay());
 
-  if (!qd.monthlySummary || !rpt) return null;
+  if (!periods.length || !rptDate) return null;
 
-  const match = qd.monthlySummary.find(x =>
-    cleanText(x.period || '') === cleanText(rpt)
+  let idx = -1;
+
+  periods.forEach((p, i) => {
+    const dt = parsePeriodDate(p.period || p.key || '');
+    if (!dt) return;
+
+    if (
+      dt.getFullYear() === rptDate.getFullYear() &&
+      dt.getMonth() === rptDate.getMonth() &&
+      dt.getDate() === rptDate.getDate()
+    ) {
+      idx = i;
+    }
+  });
+
+  if (idx < 0) return null;
+
+  const row = (group.rows || []).find(r =>
+    /Estimated Cash Bal At The End Of The Period/i.test(cleanText(r.label || ''))
   );
 
-  return match ? Number(match.cashFlowClosing) || null : null;
+  if (!row) return null;
+
+  return Number((row.values || [])[idx + 1]) || null;
 }
 function qiddiyaCashAtReportingDate(){
   const qd = FORECAST_DATA.qiddiyaData || {};
