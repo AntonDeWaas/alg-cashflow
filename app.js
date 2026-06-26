@@ -1032,23 +1032,26 @@ function liquidityDetailRows(){
   return rows;
 }
 function groupCashAtReportingDate(){
-  const raw = window.GOOGLE_SHEET_DATA?.sheets?.['ALG-CB'];
+  const group = FORECAST_DATA.algCb || {};
   const rpt = reportDateDisplay();
 
-  if (!raw || !rpt) return null;
-
-  const headerDates = raw[7] || [];   // Sheet row 8
-  const closingRow = raw[88] || [];   // Sheet row 89
+  if (!group.periods || !group.rows || !rpt) return null;
 
   let idx = -1;
 
-  headerDates.forEach((cell, i) => {
-    if (cleanText(cell) === cleanText(rpt)) idx = i;
+  group.periods.forEach((p, i) => {
+    if (cleanText(p.period || '') === cleanText(rpt)) idx = i;
   });
 
   if (idx < 0) return null;
 
-  return Number(cleanText(closingRow[idx]).replace(/,/g, '')) || null;
+  const row = group.rows.find(r =>
+    /Estimated Cash Bal At The End Of The Period/i.test(cleanText(r.label || ''))
+  );
+
+  if (!row) return null;
+
+  return Number((row.values || [])[idx + 1]) || null;
 }
 function qiddiyaCashAtReportingDate(){
   const raw = window.GOOGLE_SHEET_DATA?.sheets?.['Qiddiya Balance'];
