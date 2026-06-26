@@ -72,11 +72,43 @@ function groupRowValues(pattern){
   const row=(group.rows||[]).find(r=>pattern.test(cleanText(r.label||'')));
   return row?(row.values||[]):[];
 }
+function qiddiyaCashAtReportingDate(){
+  const qd = FORECAST_DATA.qiddiyaData || QIDDIYA_DATA;
+  const rptText = reportDateDisplay();
+  if (!qd || !qd.periods || !qd.rows) return null;
+
+  const targetDate = parsePeriodDate(rptText);
+  if (!targetDate) return null;
+
+  let idx = -1;
+
+  (qd.periods || []).forEach((p, i) => {
+    const periodText = cleanText(p.period || p.key || p.header || '');
+    const periodDate = parsePeriodDate(periodText);
+
+    if (periodDate && periodDate.getFullYear() === targetDate.getFullYear()
+      && periodDate.getMonth() === targetDate.getMonth()
+      && periodDate.getDate() === targetDate.getDate()) {
+      idx = i;
+    }
+  });
+
+  if (idx < 0) return null;
+
+  const qRow = (qd.rows || []).find(r =>
+    /Qiddiya Project Cash/i.test(cleanText(r.label || ''))
+  );
+
+  if (!qRow) return null;
+
+  return Number((qRow.values || [])[idx]) || 0;
+}
 function liquidityAtPeriodIndex(idx){
   const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
   const p=(group.periods||[])[idx]||{};
   const mon=String(p.month||'').slice(0,3);
   const q=getQiddiyaMonth(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, mon);
+   const qiddiyaReportingCash = qiddiyaCashAtReportingDate();
   const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
   const vatIdx=vatBenefitTargetIndex(periods);
@@ -97,11 +129,11 @@ function liquidityAtPeriodIndex(idx){
     qOpening:Number(q.opening)||0,
     qInflows:(Number(q.inflows)||0) + (applyVatToInflow ? vatBenefit : 0),
     qOutflows:Number(q.outflows)||0,
-    qClosing:(Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0),
+    qClosing:(qiddiyaReportingCash !== null ? qiddiyaReportingCash : (Number(q.closing)||0)) + (applyVatToClosing ? vatBenefit : 0),
     opening:gOpening-(Number(q.opening)||0),
     inflows:gInflows-(Number(q.inflows)||0) - (applyVatToInflow ? vatBenefit : 0),
     outflows:gOutflows-(Number(q.outflows)||0),
-    closing:gClosing-((Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0))
+    closing:gClosing-((qiddiyaReportingCash !== null ? qiddiyaReportingCash : (Number(q.closing)||0)) + (applyVatToClosing ? vatBenefit : 0))
   };
 }
 function liquidityInitialOpening(){
