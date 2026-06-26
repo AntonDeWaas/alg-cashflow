@@ -78,7 +78,11 @@ function getCurrentReportingPeriodInfo(){
       };
     }
   });
-
+console.log('LIQUIDITY REPORTING DATE DEBUG', {
+  reportDateDisplay: reportDateDisplay(),
+  rptDate,
+  chosen
+});
   return chosen;
 }
 function groupRowValues(pattern){
