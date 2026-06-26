@@ -53,18 +53,32 @@ function periodShortLabel(p){
   return p.header||mon||'';
 }
 function getCurrentReportingPeriodInfo(){
-  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
-  const periods=(group.periods||[]);
-  let chosen=null;
-  periods.forEach((p,i)=>{
-    const dt=parsePeriodDate(p.period||p.key||'');
-    if(!dt) return;
-    if(!chosen || dt>chosen.date) chosen={index:i,period:p,date:dt,label:periodShortLabel(p)};
+  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods = group.periods || [];
+  const rptDate = parsePeriodDate(reportDateDisplay());
+
+  if (!periods.length || !rptDate) return null;
+
+  let chosen = null;
+
+  periods.forEach((p, i) => {
+    const dt = parsePeriodDate(p.period || p.key || '');
+    if (!dt) return;
+
+    if (
+      dt.getFullYear() === rptDate.getFullYear() &&
+      dt.getMonth() === rptDate.getMonth() &&
+      dt.getDate() === rptDate.getDate()
+    ) {
+      chosen = {
+        index: i,
+        period: p,
+        date: dt,
+        label: periodShortLabel(p)
+      };
+    }
   });
-  if(!chosen){
-    const idx=periods.findIndex(p=>/^W1|Week\s*1/i.test(cleanText(p.period||'')));
-    if(idx>=0) chosen={index:idx,period:periods[idx],date:null,label:periodShortLabel(periods[idx])};
-  }
+
   return chosen;
 }
 function groupRowValues(pattern){
