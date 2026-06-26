@@ -1063,11 +1063,6 @@ function groupCashAtReportingDate(){
   return Number((row.values || [])[idx]) || null;
 }
 
-  if (idx < 0) return null;
-
-  const vals = groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
-return Number(vals[idx]) || null;
-}
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
