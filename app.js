@@ -1032,49 +1032,42 @@ function liquidityDetailRows(){
   return rows;
 }
 function groupCashAtReportingDate(){
-  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
-  const periods = group.periods || [];
-  const rptDate = parsePeriodDate(reportDateDisplay());
+  const raw = window.GOOGLE_SHEET_DATA?.sheets?.['ALG-CB'];
+  const rpt = reportDateDisplay();
 
-  if (!periods.length || !rptDate) return null;
+  if (!raw || !rpt) return null;
+
+  const headerDates = raw[7] || [];   // Sheet row 8
+  const closingRow = raw[88] || [];   // Sheet row 89
 
   let idx = -1;
 
-  periods.forEach((p, i) => {
-    const dt = parsePeriodDate(p.period || p.key || '');
-    if (!dt) return;
-
-    if (
-      dt.getFullYear() === rptDate.getFullYear() &&
-      dt.getMonth() === rptDate.getMonth() &&
-      dt.getDate() === rptDate.getDate()
-    ) {
-      idx = i;
-    }
+  headerDates.forEach((cell, i) => {
+    if (cleanText(cell) === cleanText(rpt)) idx = i;
   });
 
   if (idx < 0) return null;
 
-  const row = (group.rows || []).find(r =>
-    /Estimated Cash Bal At The End Of The Period/i.test(cleanText(r.label || ''))
-  );
-
-  if (!row) return null;
-
-  return Number((row.values || [])[idx + 1]) || null;
+  return Number(cleanText(closingRow[idx]).replace(/,/g, '')) || null;
 }
 function qiddiyaCashAtReportingDate(){
-  const qd = FORECAST_DATA.qiddiyaData || {};
+  const raw = window.GOOGLE_SHEET_DATA?.sheets?.['Qiddiya Balance'];
   const rpt = reportDateDisplay();
 
-  if (!qd.monthlySummary || !rpt) return null;
+  if (!raw || !rpt) return null;
 
-  const match = qd.monthlySummary.find(x =>
-    cleanText(x.header || '') === cleanText('Jun W3') ||
-    cleanText(x.period || '') === cleanText(rpt)
-  );
+  const headerDates = raw[2] || [];   // Sheet row 3
+  const qiddiyaRow = raw[10] || [];   // Sheet row 11
 
-  return match ? Number(match.closing) || null : null;
+  let idx = -1;
+
+  headerDates.forEach((cell, i) => {
+    if (cleanText(cell) === cleanText(rpt)) idx = i;
+  });
+
+  if (idx < 0) return null;
+
+  return Number(cleanText(qiddiyaRow[idx]).replace(/,/g, '')) || null;
 }
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
