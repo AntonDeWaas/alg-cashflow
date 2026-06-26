@@ -1032,37 +1032,29 @@ function liquidityDetailRows(){
   return rows;
 }
 function groupCashAtReportingDate(){
-  const qd = FORECAST_DATA.qiddiyaData || QIDDIYA_DATA;
-  const rptDate = parsePeriodDate(reportDateDisplay());
+  const qd = FORECAST_DATA.qiddiyaData || {};
+  const rpt = reportDateDisplay();
 
-  if (!qd || !qd.periods || !qd.rows || !rptDate) return null;
+  if (!qd.monthlySummary || !rpt) return null;
 
-  let idx = -1;
-
-  (qd.periods || []).forEach((p, i) => {
-    const dt = parsePeriodDate(p.period || p.key || p.header || '');
-    if (!dt) return;
-
-    if (
-      dt.getFullYear() === rptDate.getFullYear() &&
-      dt.getMonth() === rptDate.getMonth() &&
-      dt.getDate() === rptDate.getDate()
-    ) {
-      idx = i;
-    }
-  });
-
-  if (idx < 0) return null;
-
-  const row = (qd.rows || []).find(r =>
-    /^Cash Flow Closing$/i.test(cleanText(r.label || ''))
+  const match = qd.monthlySummary.find(x =>
+    cleanText(x.period || '') === cleanText(rpt)
   );
 
-  if (!row) return null;
-
-  return Number((row.values || [])[idx]) || null;
+  return match ? Number(match.cashFlowClosing) || null : null;
 }
+function qiddiyaCashAtReportingDate(){
+    const qd = FORECAST_DATA.qiddiyaData || QIDDIYA_DATA;
+    const rpt = reportDateDisplay();
 
+    if (!qd.monthlySummary || !rpt) return null;
+
+    const match = qd.monthlySummary.find(x =>
+        cleanText(x.period || '') === cleanText(rpt)
+    );
+
+    return match ? Number(match.cashFlowClosing) || null : null;
+}
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
