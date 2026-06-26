@@ -318,9 +318,10 @@ function renderLiquidityView(){
   const nonZeroAdj=adjusted.filter(x=>Number(x.groupClosing)!==0 || Number(x.qClosing)!==0 || Number(x.closing)!==0);
   const last=reportPeriod || (nonZeroAdj.length?nonZeroAdj[nonZeroAdj.length-1]:adjusted[adjusted.length-1]||{});
   const groupCash=Number(last.groupClosing)||0;
-  const qiddiyaCash=Number(last.qClosing)||0;
+  const qiddiyaCashByDate = qiddiyaCashAtReportingDate();
+const qiddiyaCash = qiddiyaCashByDate !== null ? qiddiyaCashByDate : (Number(last.qClosing)||0);
   const vatBenefit=qiddiyaVatDisplayBenefit();
-  const liquidCash=Number(last.closing)||0;
+  const liquidCash=groupCash-qiddiyaCash;
   const liquidOpening=liquidityInitialOpening();
   const rdate=(reportInfo&&reportInfo.date)?formatPeriodDate(reportInfo.date):reportDateDisplay();
   const rptLabel=reportInfo?('Reporting period: '+reportInfo.label+' · '):'';
