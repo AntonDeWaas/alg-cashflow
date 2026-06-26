@@ -1039,9 +1039,20 @@ function groupCashAtReportingDate(){
 
   let idx = -1;
 
-  group.periods.forEach((p, i) => {
-    if (cleanText(p.period || '') === cleanText(rpt)) idx = i;
-  });
+  const rptDate = parsePeriodDate(rpt);
+
+group.periods.forEach((p, i) => {
+  const dt = parsePeriodDate(p.period || p.key || '');
+  if (!dt || !rptDate) return;
+
+  if (
+    dt.getFullYear() === rptDate.getFullYear() &&
+    dt.getMonth() === rptDate.getMonth() &&
+    dt.getDate() === rptDate.getDate()
+  ) {
+    idx = i;
+  }
+});
 
   if (idx < 0) return null;
 
