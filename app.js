@@ -901,7 +901,9 @@ function liquidityDetailPeriodRows(){
     if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
     if(/^Total Inflows$/i.test(label)){
   const restrictedCash = qiddiyaVatDisplayBenefit();
-  const restrictedIdx = vatBenefitTargetIndex(periods);
+  const restrictedIdx = periods.findIndex(p =>
+    /Forecast/i.test(cleanText(p.period || p.header || p.key || ''))
+);
   const restrictedVals = periods.map((_, i) => i === restrictedIdx ? restrictedCash : 0);
 
   if (restrictedCash && restrictedIdx >= 0) {
