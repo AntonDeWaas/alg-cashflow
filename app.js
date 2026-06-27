@@ -918,13 +918,15 @@ function liquidityDetailPeriodRows(){
 
   return;
 }
-    if(/^Total Outflows$/i.test(label)){ addRow('Total Outflows (excluding Qiddiya)', adj.map(x=>x.outflows), 'total'); return; }
-    if(r.type==='section'){
-      if(/Estimated Cash Outflows/i.test(label)) inOutflowSection=true;
-      if(/Estimated Cash Inflows/i.test(label)) inOutflowSection=false;
-      if(/Estimated Cash Inflows|Estimated Cash Outflows|Suppliers|Payment Of Operating|Fixed Cash|Variable Cash|Capex/i.test(label)) addRow(label, periods.map(()=>null), 'section');
-      return;
-    }
+    if(/^Total Outflows$/i.test(label)){
+  const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
+  addRow(
+    'Total Outflows (excluding Qiddiya)',
+    adj.map((x, i) => x.outflows + (Number(supplierTotal[i]) || 0)),
+    'total'
+  );
+  return;
+}
     if(!important.test(label)) return;
     let vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
     // VAT recovery benefit / economic benefit is a restricted-cash/liquidity adjustment, not an operating outflow.
