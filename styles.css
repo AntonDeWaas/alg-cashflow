@@ -316,3 +316,46 @@
   font-weight: 900;
   box-shadow: inset 0 0 0 1px #0f7a4f;
 }
+/* Liquidity Excl. Qiddiya table scrolling */
+#liquiditySummary {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+#liquiditySummary table {
+  min-width: 1800px;
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#liquiditySummary thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #f8f4ec;
+}
+
+#liquiditySummary th:first-child,
+#liquiditySummary td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #fffaf2;
+  min-width: 300px;
+  font-weight: 800;
+}
+
+#liquiditySummary thead th:first-child {
+  z-index: 7;
+  background: #f8f4ec;
+}
+
+#liquiditySummary tr.section td {
+  background: #0f4f45 !important;
+  color: #fff !important;
+  font-weight: 900;
+}
