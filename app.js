@@ -899,7 +899,23 @@ function liquidityDetailPeriodRows(){
     if(/Project Qiddiya Outflow/i.test(label)) return;
     if(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)) return;
     if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
-    if(/^Total Inflows$/i.test(label)){ addRow('Total Inflows (excluding Qiddiya)', adj.map(x=>x.inflows), 'total'); return; }
+    if(/^Total Inflows$/i.test(label)){
+  const restrictedCash = qiddiyaVatDisplayBenefit();
+  const restrictedIdx = vatBenefitTargetIndex(periods);
+  const restrictedVals = periods.map((_, i) => i === restrictedIdx ? restrictedCash : 0);
+
+  if (restrictedCash && restrictedIdx >= 0) {
+    addRow('Restricted Cash – Qiddiya Project', restrictedVals, 'line');
+  }
+
+  addRow(
+    'Total Inflows (excluding Qiddiya)',
+    adj.map((x, i) => x.inflows + (restrictedVals[i] || 0)),
+    'total'
+  );
+
+  return;
+}
     if(/^Total Outflows$/i.test(label)){ addRow('Total Outflows (excluding Qiddiya)', adj.map(x=>x.outflows), 'total'); return; }
     if(r.type==='section'){
       if(/Estimated Cash Outflows/i.test(label)) inOutflowSection=true;
