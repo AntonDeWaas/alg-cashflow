@@ -1031,28 +1031,37 @@ function liquidityDetailRows(){
   addRow('Estimated Cash Balance Closing', adjusted.map(x=>x.closing), 'total');
   return rows;
 }
+function reportingDateObject(){
+  const saved = localStorage.getItem('cf_report_date') || '';
+  if (saved) {
+    const d = new Date(saved + 'T00:00:00');
+    if (!isNaN(d)) return d;
+  }
+
+  const display = reportDateDisplay();
+  const parsed = new Date(display);
+  return isNaN(parsed) ? null : parsed;
+}
+
+function sameDay(a, b){
+  return a && b &&
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+}
+
 function groupCashAtReportingDate(){
   const group = FORECAST_DATA.algCb || {};
-  const rpt = reportDateDisplay();
+  const rptDate = reportingDateObject();
 
-  if (!group.periods || !group.rows || !rpt) return null;
+  if (!group.periods || !group.rows || !rptDate) return null;
 
   let idx = -1;
 
-  const rptDate = parsePeriodDate(rpt);
-
-group.periods.forEach((p, i) => {
-  const dt = parsePeriodDate(p.period || p.key || '');
-  if (!dt || !rptDate) return;
-
-  if (
-    dt.getFullYear() === rptDate.getFullYear() &&
-    dt.getMonth() === rptDate.getMonth() &&
-    dt.getDate() === rptDate.getDate()
-  ) {
-    idx = i;
-  }
-});
+  group.periods.forEach((p, i) => {
+    const dt = parsePeriodDate(p.period || p.key || '');
+    if (sameDay(dt, rptDate)) idx = i;
+  });
 
   if (idx < 0) return null;
 
@@ -1062,26 +1071,27 @@ group.periods.forEach((p, i) => {
 
   if (!row) return null;
 
-  return Number((row.values || [])[idx + 1]) || null;
+  return Number((row.values || [])[idx]) || null;
 }
+
 function qiddiyaCashAtReportingDate(){
-  const raw = window.GOOGLE_SHEET_DATA?.sheets?.['Qiddiya Balance'];
-  const rpt = reportDateDisplay();
+  const qd = FORECAST_DATA.qiddiyaData || {};
+  const rptDate = reportingDateObject();
 
-  if (!raw || !rpt) return null;
+  if (!qd.monthlySummary || !rptDate) return null;
 
-  const headerDates = raw[2] || [];   // Sheet row 3
-  const qiddiyaRow = raw[10] || [];   // Sheet row 11
+  const rptMonth = rptDate.toLocaleString('en-US', { month: 'short' });
+  const rptDateText = rptDate.toLocaleDateString('en-GB');
 
-  let idx = -1;
+  const match = qd.monthlySummary.find(x =>
+    cleanText(x.period || '') === cleanText(rptDateText) ||
+    (
+      cleanText(x.month || '') === cleanText(rptMonth) &&
+      cleanText(x.header || '').includes('W3')
+    )
+  );
 
-  headerDates.forEach((cell, i) => {
-    if (cleanText(cell) === cleanText(rpt)) idx = i;
-  });
-
-  if (idx < 0) return null;
-
-  return Number(cleanText(qiddiyaRow[idx]).replace(/,/g, '')) || null;
+  return match ? Number(match.closing) || null : null;
 }
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
