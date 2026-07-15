@@ -881,65 +881,238 @@ function liquidityInitialOpening(){
   return Number(first.opening)||0;
 }
 function liquidityDetailPeriodRows(){
-  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
-  const periods=(group.periods||[]);
-  const rows=[];
-  const addRow=(label, values, type='line')=>rows.push({label,values,type});
-  if(!periods.length) return {periods:[], rows:[]};
-  const adj=periods.map((p,i)=>liquidityAtPeriodIndex(i));
-  const vatBenefit=qiddiyaVatBenefit();
-  const vatIdx=vatBenefitTargetIndex(periods);
-  addRow('Estimated Cash Balance Opening', adj.map(x=>x.opening), 'total');
-  const important = /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
-  let inOutflowSection=false;
-  (group.rows||[]).forEach(r=>{
-    const label=cleanText(r.label||'');
-    if(!label) return;
-    if(/Project Qiddiya Inflow/i.test(label)) return;
-    if(/Project Qiddiya Outflow/i.test(label)) return;
-    if(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)) return;
-    if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
-    if(/^Total Inflows$/i.test(label)){
-  const restrictedCash = qiddiyaVatDisplayBenefit();
-  const restrictedIdx = periods.findIndex(p =>
-    /Forecast/i.test(cleanText(p.period || p.header || p.key || ''))
-);
-  const restrictedVals = periods.map((_, i) => i === restrictedIdx ? restrictedCash : 0);
+  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods = group.periods || [];
+  const rows = [];
 
-  if (restrictedCash && restrictedIdx >= 0) {
-    addRow('Restricted Cash – Qiddiya Project', restrictedVals, 'line');
+  const addRow = (label, values, type = 'line') => {
+    rows.push({ label, values, type });
+  };
+
+  if (!periods.length) {
+    return { periods: [], rows: [] };
   }
 
+  /*
+   * Base adjusted data:
+   * ALG-CB less the corresponding Qiddiya Balance figures.
+   */
+  const adj = periods.map((p, i) => liquidityAtPeriodIndex(i));
+
+  /*
+   * Restricted Cash – Qiddiya Project:
+   * Read B13 through qiddiyaVatDisplayBenefit().
+   * Keep its original positive or negative sign.
+   */
+  const restrictedCash = qiddiyaVatDisplayBenefit();
+  const reportInfo = getCurrentReportingPeriodInfo();
+
+  const currentMonth = reportInfo
+    ? String(
+        reportInfo.period.month ||
+        reportInfo.period.header ||
+        ''
+      ).slice(0, 3)
+    : '';
+
+  let restrictedIdx = periods.findIndex(p =>
+    String(p.month || p.header || '').slice(0, 3) === currentMonth &&
+    /Forecast/i.test(
+      cleanText(p.period || p.header || p.key || '')
+    )
+  );
+
+  /*
+   * Fallback if the current-month Forecast column was not identified.
+   */
+  if (restrictedIdx < 0) {
+    restrictedIdx = periods.findIndex(p =>
+      /Forecast/i.test(
+        cleanText(p.period || p.header || p.key || '')
+      )
+    );
+  }
+
+  const restrictedVals = periods.map((_, i) =>
+    i === restrictedIdx ? Number(restrictedCash) || 0 : 0
+  );
+
+  /*
+   * The ALG-CB Total Outflows row currently excludes the separate
+   * Total Supplier Payments subtotal, so include that subtotal.
+   */
+  const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
+
+  const totalInflows = adj.map((x, i) =>
+    (Number(x.inflows) || 0) +
+    (Number(restrictedVals[i]) || 0)
+  );
+
+  const totalOutflows = adj.map((x, i) =>
+    (Number(x.outflows) || 0) +
+    (Number(supplierTotal[i]) || 0)
+  );
+
+  /*
+   * Rolling cash-flow calculation.
+   *
+   * Current-month weekly/forecast columns roll continuously.
+   * The current-month TOT column is a summary and is not included
+   * in the rolling chain.
+   *
+   * After the current month, future monthly TOT columns continue
+   * from the previous calculated closing.
+   */
+  const isTot = p =>
+    /^TOT$/i.test(cleanText(p.period || '')) ||
+    /^Total$/i.test(cleanText(p.period || ''));
+
+  const isGrandTotal = p =>
+    /^Total$/i.test(cleanText(p.month || p.header || ''));
+
+  let rollingStart = -1;
+
+  if (currentMonth) {
+    rollingStart = periods.findIndex(p =>
+      String(p.month || p.header || '').slice(0, 3) === currentMonth &&
+      !isTot(p) &&
+      !isGrandTotal(p)
+    );
+  }
+
+  const openingValues = periods.map(() => 0);
+  const closingValues = periods.map(() => 0);
+
+  let rollingClose = null;
+
+  periods.forEach((p, i) => {
+    const periodMonth =
+      String(p.month || p.header || '').slice(0, 3);
+
+    const currentMonthTot =
+      periodMonth === currentMonth && isTot(p);
+
+    const summaryColumn =
+      currentMonthTot || isGrandTotal(p);
+
+    const shouldRoll =
+      rollingStart >= 0 &&
+      i >= rollingStart &&
+      !summaryColumn;
+
+    if (shouldRoll) {
+      const opening =
+        rollingClose === null
+          ? Number(adj[i].opening) || 0
+          : rollingClose;
+
+      const closing =
+        opening +
+        (Number(totalInflows[i]) || 0) -
+        (Number(totalOutflows[i]) || 0);
+
+      openingValues[i] = opening;
+      closingValues[i] = closing;
+      rollingClose = closing;
+    } else {
+      /*
+       * Historical monthly totals and summary columns retain their
+       * source-adjusted opening and closing figures.
+       */
+      openingValues[i] = Number(adj[i].opening) || 0;
+      closingValues[i] = Number(adj[i].closing) || 0;
+    }
+  });
+
   addRow(
-    'Total Inflows (excluding Qiddiya)',
-    adj.map((x, i) => x.inflows + (restrictedVals[i] || 0)),
+    'Estimated Cash Balance Opening',
+    openingValues,
     'total'
   );
 
-  return;
-}
-    if(/^Total Outflows$/i.test(label)){
-  const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
-  addRow(
-    'Total Outflows (excluding Qiddiya)',
-    adj.map((x, i) => x.outflows + (Number(supplierTotal[i]) || 0)),
-    'total'
-  );
-  return;
-}
-    if(!important.test(label)) return;
-    let vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
-    // VAT recovery benefit / economic benefit is a restricted-cash/liquidity adjustment, not an operating outflow.
-    // Therefore it is shown only in the inflow side Others line and never in the outflow Others row.
-    if(/^Others$/i.test(label) && !inOutflowSection && vatBenefit && vatIdx>=0){
-      vals=vals.map((v,i)=>i===vatIdx ? v-vatBenefit : v);
-      addRow('Others (incl. VAT recovery benefit adjustment)', vals, r.type||'line');
+  const important =
+    /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
+
+  (group.rows || []).forEach(r => {
+    const label = cleanText(r.label || '');
+
+    if (!label) return;
+
+    /*
+     * Qiddiya is handled through the Qiddiya Balance adjustment,
+     * so do not repeat its original ALG-CB lines.
+     */
+    if (/Project Qiddiya Inflow/i.test(label)) return;
+    if (/Project Qiddiya Outflow/i.test(label)) return;
+
+    if (
+      /Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)
+    ) return;
+
+    if (
+      /Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)
+    ) return;
+
+    if (/^Total Inflows$/i.test(label)) {
+      if (restrictedIdx >= 0 && Number(restrictedCash) !== 0) {
+        addRow(
+          'Restricted Cash – Qiddiya Project',
+          restrictedVals,
+          'line'
+        );
+      }
+
+      addRow(
+        'Total Inflows (excluding Qiddiya)',
+        totalInflows,
+        'total'
+      );
+
       return;
     }
-    if(vals.some(v=>Number(v)!==0)) addRow(label, vals, r.type||'line');
+
+    if (/^Total Outflows$/i.test(label)) {
+      addRow(
+        'Total Outflows (excluding Qiddiya)',
+        totalOutflows,
+        'total'
+      );
+
+      return;
+    }
+
+    if (r.type === 'section') {
+      if (
+        /Estimated Cash Inflows|Estimated Cash Outflows|Suppliers|Payment Of Operating|Fixed Cash|Variable Cash|Capex/i.test(label)
+      ) {
+        addRow(
+          label,
+          periods.map(() => null),
+          'section'
+        );
+      }
+
+      return;
+    }
+
+    if (!important.test(label)) return;
+
+    const vals = periods.map((p, i) =>
+      Number((r.values || [])[i]) || 0
+    );
+
+    if (vals.some(v => Number(v) !== 0)) {
+      addRow(label, vals, r.type || 'line');
+    }
   });
-  addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
-  return {periods, rows};
+
+  addRow(
+    'Estimated Cash Balance Closing',
+    closingValues,
+    'total'
+  );
+
+  return { periods, rows };
 }
 function liquidityDetailPeriodRows_backup(){
   const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
