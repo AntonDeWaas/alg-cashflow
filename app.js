@@ -941,6 +941,67 @@ function liquidityDetailPeriodRows(){
   addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
   return {periods, rows};
 }
+function liquidityDetailPeriodRows_backup(){
+  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods=(group.periods||[]);
+  const rows=[];
+  const addRow=(label, values, type='line')=>rows.push({label,values,type});
+  if(!periods.length) return {periods:[], rows:[]};
+  const adj=periods.map((p,i)=>liquidityAtPeriodIndex(i));
+  const vatBenefit=qiddiyaVatBenefit();
+  const vatIdx=vatBenefitTargetIndex(periods);
+  addRow('Estimated Cash Balance Opening', adj.map(x=>x.opening), 'total');
+  const important = /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
+  let inOutflowSection=false;
+  (group.rows||[]).forEach(r=>{
+    const label=cleanText(r.label||'');
+    if(!label) return;
+    if(/Project Qiddiya Inflow/i.test(label)) return;
+    if(/Project Qiddiya Outflow/i.test(label)) return;
+    if(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)) return;
+    if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
+    if(/^Total Inflows$/i.test(label)){
+  const restrictedCash = qiddiyaVatDisplayBenefit();
+  const restrictedIdx = periods.findIndex(p =>
+    /Forecast/i.test(cleanText(p.period || p.header || p.key || ''))
+);
+  const restrictedVals = periods.map((_, i) => i === restrictedIdx ? restrictedCash : 0);
+
+  if (restrictedCash && restrictedIdx >= 0) {
+    addRow('Restricted Cash – Qiddiya Project', restrictedVals, 'line');
+  }
+
+  addRow(
+    'Total Inflows (excluding Qiddiya)',
+    adj.map((x, i) => x.inflows + (restrictedVals[i] || 0)),
+    'total'
+  );
+
+  return;
+}
+    if(/^Total Outflows$/i.test(label)){
+  const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
+  addRow(
+    'Total Outflows (excluding Qiddiya)',
+    adj.map((x, i) => x.outflows + (Number(supplierTotal[i]) || 0)),
+    'total'
+  );
+  return;
+}
+    if(!important.test(label)) return;
+    let vals=periods.map((p,i)=>Number((r.values||[])[i])||0);
+    // VAT recovery benefit / economic benefit is a restricted-cash/liquidity adjustment, not an operating outflow.
+    // Therefore it is shown only in the inflow side Others line and never in the outflow Others row.
+    if(/^Others$/i.test(label) && !inOutflowSection && vatBenefit && vatIdx>=0){
+      vals=vals.map((v,i)=>i===vatIdx ? v-vatBenefit : v);
+      addRow('Others (incl. VAT recovery benefit adjustment)', vals, r.type||'line');
+      return;
+    }
+    if(vals.some(v=>Number(v)!==0)) addRow(label, vals, r.type||'line');
+  });
+  addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
+  return {periods, rows};
+}
 function liquidityColumnSelection(periods){
   const modeEl=$('liquidityViewMode');
   const mode=modeEl?modeEl.value:'current';
