@@ -905,15 +905,11 @@ function liquidityDetailPeriodRows(){
    * Keep its original positive or negative sign.
    */
   const restrictedCash = qiddiyaVatDisplayBenefit();
-  const reportInfo = getCurrentReportingPeriodInfo();
+  const reportDate = reportingDateObject();
 
-  const currentMonth = reportInfo
-    ? String(
-        reportInfo.period.month ||
-        reportInfo.period.header ||
-        ''
-      ).slice(0, 3)
-    : '';
+const currentMonth = reportDate
+  ? reportDate.toLocaleString('en-US', { month: 'short' })
+  : '';
 
   let restrictedIdx = periods.findIndex(p =>
     String(p.month || p.header || '').slice(0, 3) === currentMonth &&
