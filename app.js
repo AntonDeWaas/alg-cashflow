@@ -686,18 +686,49 @@ function parseDashboardSheet(matrix){
 function parseQiddiyaBalance(matrix){
   const rows=matrix||[];
   if(!rows.length) return null;
-  const headerIdx=rows.findIndex(r=>r.some(c=>/^Jan-\d{2}$/i.test(cleanText(c))));
+
+  /*
+   * Qiddiya Balance uses the same two-row period headings as ALG-CB:
+   * row 1 = month / weekly heading, row 2 = date, Forecast or TOT.
+   * Merged Google Sheet headings may export blank cells, so carry the last
+   * non-blank heading forward while retaining every physical data column.
+   */
+  const headerIdx=rows.findIndex(r=>(r||[]).some(c=>/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:-|\sW)/i.test(cleanText(c))));
   if(headerIdx<0) return null;
+
   const header=rows[headerIdx]||[];
-  const cols=[];
-  for(let c=1;c<header.length;c++){ const h=cleanText(header[c]); if(h) cols.push({col:c,label:h.slice(0,3),header:h}); }
+  const periodRow=rows[headerIdx+1]||[];
   const open=rowByLabel(rows,/^Opening$/i, headerIdx+1);
   const inflow=rowByLabel(rows,/^Inflow$/i, headerIdx+1);
   const outflow=rowByLabel(rows,/^Outflow$/i, headerIdx+1);
   const close=rowByLabel(rows,/^Closing/i, headerIdx+1);
+
+  const maxCols=Math.max(
+    header.length, periodRow.length,
+    (open?.values||[]).length, (inflow?.values||[]).length,
+    (outflow?.values||[]).length, (close?.values||[]).length
+  );
+
+  const cols=[];
+  let carriedHeader='';
+  for(let c=1;c<maxCols;c++){
+    const rawHeader=cleanText(header[c]||'');
+    const period=cleanText(periodRow[c]||'');
+    if(rawHeader) carriedHeader=rawHeader;
+
+    const hasData=[open,inflow,outflow,close].some(r=>{
+      const v=r?.values?.[c];
+      return v!==undefined && v!==null && cleanText(v)!=='';
+    });
+    if(!carriedHeader && !period && !hasData) continue;
+
+    const effectiveHeader=rawHeader||carriedHeader;
+    const month=(effectiveHeader.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i)||[])[1]||effectiveHeader.slice(0,3);
+    const key=[effectiveHeader,period].filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
+    cols.push({col:c,index:cols.length,label:month.slice(0,3),header:effectiveHeader,period,key});
+  }
+
   // VAT recovery / economic benefit is information only in the dashboard KPI.
-  // It is read from Qiddiya Payable / Qiddiya Balance B13. Because Apps Script may export A2:AZ13,
-  // we locate the row by label first and fall back to the equivalent array row.
   const vatRow=rows.find(r=>String(r[0]||'').toLowerCase().includes('vat recovery')) || [];
   let vatDisplayBenefit=0;
   for(let vi=1; vi<vatRow.length; vi++){
@@ -705,10 +736,10 @@ function parseQiddiyaBalance(matrix){
     if(n){ vatDisplayBenefit=n; break; }
   }
   if(!vatDisplayBenefit) vatDisplayBenefit=gsNumber((rows[11]||[])[1])||0;
-  // Keep vatBenefit as zero so existing liquidity/group calculations are not changed by the info KPI.
   const vatBenefit=0;
-  return {cols, vatBenefit, vatDisplayBenefit, monthlySummary:cols.map(c=>({
-    month:c.label, header:c.header,
+
+  return {cols, vatBenefit, vatDisplayBenefit, monthlySummary:cols.map((c,i)=>({
+    index:i, col:c.col, month:c.label, header:c.header, period:c.period, key:c.key,
     opening:gsNumber(open?.values?.[c.col])||0,
     inflows:gsNumber(inflow?.values?.[c.col])||0,
     outflows:gsNumber(outflow?.values?.[c.col])||0,
@@ -722,7 +753,16 @@ function lastNonZero(arr, field){
 
 function getQiddiyaMonth(qd, mon){
   const qsum=(qd&&qd.monthlySummary)||[];
-  return qsum.find(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase())||{};
+  const target=String(mon||'').slice(0,3).toLowerCase();
+  const matches=qsum.filter(x=>String(x.month||x.header||'').slice(0,3).toLowerCase()===target);
+  if(!matches.length) return {};
+
+  // Monthly views must use the explicit monthly TOT column.  Qiddiya Balance
+  // also contains weekly/checkpoint columns, so taking the first month match
+  // would incorrectly return (for example) Jan 1-13 instead of Jan TOT.
+  return matches.find(x=>/^TOT$/i.test(cleanText(x.period||''))) ||
+    matches.find(x=>/Forecast/i.test(cleanText(x.period||x.header||x.key||''))) ||
+    matches[matches.length-1] || {};
 }
 function getGroupMonth(group, mon){
   const gsum=monthsOnly((group&&group.monthlySummary)||[]);
@@ -847,8 +887,36 @@ function groupRowValues(pattern){
 function liquidityAtPeriodIndex(idx){
   const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
   const p=(group.periods||[])[idx]||{};
-  const mon=String(p.month||'').slice(0,3);
-  const q=getQiddiyaMonth(FORECAST_DATA.qiddiyaData||QIDDIYA_DATA, mon);
+  const mon=String(p.month||p.header||'').slice(0,3);
+  const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA||{};
+  const qsum=qd.monthlySummary||[];
+
+  /*
+   * The Qiddiya Balance sheet is now physically aligned to ALG-CB.
+   * Use the same column index first. If a future sheet edit breaks that
+   * alignment, fall back to a normalized heading/period match.
+   */
+  const norm=v=>cleanText(v||'').toLowerCase().replace(/\s+/g,' ').trim();
+  const pHeader=norm(p.header||p.month||'');
+  const pPeriod=norm(p.period||'');
+  // Both sheets now use the same physical column layout. Match the original
+  // Google-Sheet column number first, then array index, then normalized labels.
+  // This remains safe if a blank/checkpoint column is inserted in either parser.
+  let q=qsum.find(x=>Number(x.col)===Number(p.col)) || qsum[idx] || {};
+  const qHeader=norm(q.header||q.month||'');
+  const qPeriod=norm(q.period||'');
+  const indexLooksAligned=(
+    (!pHeader || !qHeader || pHeader.slice(0,3)===qHeader.slice(0,3)) &&
+    (!pPeriod || !qPeriod || pPeriod===qPeriod)
+  );
+  if(!indexLooksAligned){
+    q=qsum.find(x=>{
+      const xHeader=norm(x.header||x.month||'');
+      const xPeriod=norm(x.period||'');
+      return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
+    })||{};
+  }
+
   const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
   const vatIdx=vatBenefitTargetIndex(periods);
@@ -857,23 +925,26 @@ function liquidityAtPeriodIndex(idx){
   const openingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
   const inflowVals=groupRowValues(/^Total Inflows$/i);
   const outflowVals=groupRowValues(/^Total Outflows$/i);
-  let closingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
+  const closingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
   const gOpening=Number(openingVals[idx])||0;
   const gInflows=Number(inflowVals[idx])||0;
   const gOutflows=Number(outflowVals[idx])||0;
   let gClosing=Number(closingVals[idx]);
-  if(!gClosing) gClosing=gOpening+gInflows-gOutflows;
+  if(!Number.isFinite(gClosing)) gClosing=gOpening+gInflows-gOutflows;
+
+  const qOpening=Number(q.opening)||0;
+  const qInflows=(Number(q.inflows)||0)+(applyVatToInflow?vatBenefit:0);
+  const qOutflows=Number(q.outflows)||0;
+  const qClosing=(Number(q.closing)||0)+(applyVatToClosing?vatBenefit:0);
+
   return {
-    period:p, index:idx, month:mon,
-    groupOpening:gOpening, groupInflows:gInflows, groupOutflows:gOutflows, groupClosing:gClosing,
-    qOpening:Number(q.opening)||0,
-    qInflows:(Number(q.inflows)||0) + (applyVatToInflow ? vatBenefit : 0),
-    qOutflows:Number(q.outflows)||0,
-    qClosing:(Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0),
-    opening:gOpening-(Number(q.opening)||0),
-    inflows:gInflows-(Number(q.inflows)||0) - (applyVatToInflow ? vatBenefit : 0),
-    outflows:gOutflows-(Number(q.outflows)||0),
-    closing:gClosing-((Number(q.closing)||0) + (applyVatToClosing ? vatBenefit : 0))
+    period:p,index:idx,month:mon,qiddiyaIndex:q.index,
+    groupOpening:gOpening,groupInflows:gInflows,groupOutflows:gOutflows,groupClosing:gClosing,
+    qOpening,qInflows,qOutflows,qClosing,
+    opening:gOpening-qOpening,
+    inflows:gInflows-qInflows,
+    outflows:gOutflows-qOutflows,
+    closing:gClosing-qClosing
   };
 }
 function liquidityInitialOpening(){
@@ -934,10 +1005,35 @@ const currentMonth = reportDate
   );
 
   /*
-   * The ALG-CB Total Outflows row currently excludes the separate
-   * Total Supplier Payments subtotal, so include that subtotal.
+   * Supplier-payment handling.
+   *
+   * Some ALG-CB versions already include Total Supplier Payments inside
+   * Total Outflows; one earlier version omitted it for an individual period.
+   * Add the subtotal only when the component structure proves it is missing,
+   * preventing a blanket double count across the complete schedule.
    */
   const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
+  const totalOutflowSource = groupRowValues(/^Total Outflows$/i);
+  const capitalExpenses = groupRowValues(/^Capital Expenses$/i);
+  const subtotalRows = (group.rows || []).filter(r=>/^Sub Total$/i.test(cleanText(r.label||'')));
+  const tolerance = 0.75; // values are AED '000 and displayed rounded to whole thousands
+
+  const supplierSupplement = periods.map((_, i) => {
+    const supplier = Number(supplierTotal[i]) || 0;
+    if(!supplier) return 0;
+
+    const sourceTotal = Number(totalOutflowSource[i]) || 0;
+    const otherComponents = subtotalRows.reduce((sum,r)=>sum+(Number((r.values||[])[i])||0),0) +
+      (Number(capitalExpenses[i])||0);
+    const expectedIncludingSupplier = otherComponents + supplier;
+
+    if(Math.abs(sourceTotal - expectedIncludingSupplier) <= tolerance) return 0;
+    if(Math.abs((sourceTotal + supplier) - expectedIncludingSupplier) <= tolerance) return supplier;
+
+    // If component rows are unavailable/ambiguous, preserve the source total
+    // rather than risking a material double count.
+    return 0;
+  });
 
   const totalInflows = adj.map((x, i) =>
     (Number(x.inflows) || 0) +
@@ -946,78 +1042,27 @@ const currentMonth = reportDate
 
   const totalOutflows = adj.map((x, i) =>
     (Number(x.outflows) || 0) +
-    (Number(supplierTotal[i]) || 0)
+    (Number(supplierSupplement[i]) || 0)
   );
 
   /*
-   * Rolling cash-flow calculation.
+   * Each displayed ALG-CB column is calculated independently against the
+   * matching Qiddiya Balance column. Monthly TOT columns remain summaries;
+   * they are not inserted into a rolling weekly chain.
    *
-   * Current-month weekly/forecast columns roll continuously.
-   * The current-month TOT column is a summary and is not included
-   * in the rolling chain.
-   *
-   * After the current month, future monthly TOT columns continue
-   * from the previous calculated closing.
+   * Closing is reconciled to the displayed movements, including the separate
+   * Total Supplier Payments subtotal, so Opening + Inflows - Outflows always
+   * agrees with Closing for weekly, forecast and monthly TOT columns.
    */
-  const isTot = p =>
-    /^TOT$/i.test(cleanText(p.period || '')) ||
-    /^Total$/i.test(cleanText(p.period || ''));
-
   const isGrandTotal = p =>
     /^Total$/i.test(cleanText(p.month || p.header || ''));
 
-  let rollingStart = -1;
-
-  if (currentMonth) {
-    rollingStart = periods.findIndex(p =>
-      String(p.month || p.header || '').slice(0, 3) === currentMonth &&
-      !isTot(p) &&
-      !isGrandTotal(p)
-    );
-  }
-
-  const openingValues = periods.map(() => 0);
-  const closingValues = periods.map(() => 0);
-
-  let rollingClose = null;
-
-  periods.forEach((p, i) => {
-    const periodMonth =
-      String(p.month || p.header || '').slice(0, 3);
-
-    const currentMonthTot =
-      periodMonth === currentMonth && isTot(p);
-
-    const summaryColumn =
-      currentMonthTot || isGrandTotal(p);
-
-    const shouldRoll =
-      rollingStart >= 0 &&
-      i >= rollingStart &&
-      !summaryColumn;
-
-    if (shouldRoll) {
-      const opening =
-        rollingClose === null
-          ? Number(adj[i].opening) || 0
-          : rollingClose;
-
-      const closing =
-        opening +
-        (Number(totalInflows[i]) || 0) -
-        (Number(totalOutflows[i]) || 0);
-
-      openingValues[i] = opening;
-      closingValues[i] = closing;
-      rollingClose = closing;
-    } else {
-      /*
-       * Historical monthly totals and summary columns retain their
-       * source-adjusted opening and closing figures.
-       */
-      openingValues[i] = Number(adj[i].opening) || 0;
-      closingValues[i] = Number(adj[i].closing) || 0;
-    }
+  const openingValues = adj.map(x => Number(x.opening) || 0);
+  const closingValues = periods.map((p, i) => {
+    if (isGrandTotal(p)) return Number(adj[i].closing) || 0;
+    return (Number(openingValues[i]) || 0) +
+      (Number(totalInflows[i]) || 0) -
+      (Number(totalOutflows[i]) || 0);
   });
 
   addRow(
