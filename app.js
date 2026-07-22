@@ -899,23 +899,15 @@ function liquidityAtPeriodIndex(idx){
   const norm=v=>cleanText(v||'').toLowerCase().replace(/\s+/g,' ').trim();
   const pHeader=norm(p.header||p.month||'');
   const pPeriod=norm(p.period||'');
-  // Both sheets now use the same physical column layout. Match the original
-  // Google-Sheet column number first, then array index, then normalized labels.
-  // This remains safe if a blank/checkpoint column is inserted in either parser.
-  let q=qsum.find(x=>Number(x.col)===Number(p.col)) || qsum[idx] || {};
-  const qHeader=norm(q.header||q.month||'');
-  const qPeriod=norm(q.period||'');
-  const indexLooksAligned=(
-    (!pHeader || !qHeader || pHeader.slice(0,3)===qHeader.slice(0,3)) &&
-    (!pPeriod || !qPeriod || pPeriod===qPeriod)
-  );
-  if(!indexLooksAligned){
-    q=qsum.find(x=>{
-      const xHeader=norm(x.header||x.month||'');
-      const xPeriod=norm(x.period||'');
-      return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
-    })||{};
-  }
+  // Match by the visible period identity first. This is essential for TOT
+  // columns because an array/physical-column fallback can otherwise select the
+  // first weekly column of the month. Use source column and array index only as
+  // fallbacks when the exact heading + period pair is unavailable.
+  let q=qsum.find(x=>{
+    const xHeader=norm(x.header||x.month||'');
+    const xPeriod=norm(x.period||'');
+    return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
+  }) || qsum.find(x=>Number(x.col)===Number(p.col)) || qsum[idx] || {};
 
   const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
@@ -1035,9 +1027,15 @@ const currentMonth = reportDate
     return 0;
   });
 
+  /*
+   * B13 is cash already held in the Group bank but economically committed to
+   * the Qiddiya project. Display the positive amount on its own row, but treat
+   * it as a negative inflow in the first current-month Forecast column so it
+   * reduces available liquidity and that Forecast closing balance exactly once.
+   */
   const totalInflows = adj.map((x, i) =>
-    (Number(x.inflows) || 0) +
-    (Number(restrictedVals[i]) || 0)
+    (Number(x.inflows) || 0) -
+    Math.abs(Number(restrictedVals[i]) || 0)
   );
 
   const totalOutflows = adj.map((x, i) =>
@@ -1054,15 +1052,38 @@ const currentMonth = reportDate
    * Total Supplier Payments subtotal, so Opening + Inflows - Outflows always
    * agrees with Closing for weekly, forecast and monthly TOT columns.
    */
-  const isGrandTotal = p =>
+  const isSummaryColumn = p =>
+    /^TOT$/i.test(cleanText(p.period || '')) ||
     /^Total$/i.test(cleanText(p.month || p.header || ''));
 
-  const openingValues = adj.map(x => Number(x.opening) || 0);
-  const closingValues = periods.map((p, i) => {
-    if (isGrandTotal(p)) return Number(adj[i].closing) || 0;
-    return (Number(openingValues[i]) || 0) +
+  /*
+   * Weekly and Forecast columns form the movement chain:
+   *   next opening = previous calculated movement closing.
+   * Monthly TOT columns are independent source summaries and must neither
+   * receive nor pass a rolling balance. Their opening and closing remain the
+   * direct ALG-CB less Qiddiya Balance amounts for that same TOT period.
+   */
+  const openingValues = periods.map(() => 0);
+  const closingValues = periods.map(() => 0);
+  let previousMovementClosing = null;
+
+  periods.forEach((p, i) => {
+    if (isSummaryColumn(p)) {
+      openingValues[i] = Number(adj[i].opening) || 0;
+      closingValues[i] = Number(adj[i].closing) ||
+        (openingValues[i] + (Number(totalInflows[i]) || 0) - (Number(totalOutflows[i]) || 0));
+      return;
+    }
+
+    openingValues[i] = previousMovementClosing === null
+      ? (Number(adj[i].opening) || 0)
+      : previousMovementClosing;
+
+    closingValues[i] = openingValues[i] +
       (Number(totalInflows[i]) || 0) -
       (Number(totalOutflows[i]) || 0);
+
+    previousMovementClosing = closingValues[i];
   });
 
   addRow(
