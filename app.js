@@ -992,8 +992,25 @@ const currentMonth = reportDate
     );
   }
 
+  /*
+   * Show the restricted-cash adjustment in the target Forecast movement and
+   * also in that month's TOT summary. The TOT appearance is a summary only;
+   * it does not create a second cash movement.
+   */
+  const restrictedMonth = restrictedIdx >= 0
+    ? String(periods[restrictedIdx].month || periods[restrictedIdx].header || '').slice(0, 3)
+    : '';
+  const restrictedTotIdx = restrictedMonth
+    ? periods.findIndex(p =>
+        String(p.month || p.header || '').slice(0, 3) === restrictedMonth &&
+        /^TOT$/i.test(cleanText(p.period || ''))
+      )
+    : -1;
+
   const restrictedVals = periods.map((_, i) =>
-    i === restrictedIdx ? Number(restrictedCash) || 0 : 0
+    (i === restrictedIdx || i === restrictedTotIdx)
+      ? Number(restrictedCash) || 0
+      : 0
   );
 
   /*
@@ -1052,26 +1069,51 @@ const currentMonth = reportDate
    * Total Supplier Payments subtotal, so Opening + Inflows - Outflows always
    * agrees with Closing for weekly, forecast and monthly TOT columns.
    */
-  const isSummaryColumn = p =>
-    /^TOT$/i.test(cleanText(p.period || '')) ||
-    /^Total$/i.test(cleanText(p.month || p.header || ''));
+  const isMonthlyTot = p => /^TOT$/i.test(cleanText(p.period || ''));
+  const isAnnualTotal = p => /^Total$/i.test(cleanText(p.month || p.header || ''));
 
   /*
-   * Weekly and Forecast columns form the movement chain:
-   *   next opening = previous calculated movement closing.
-   * Monthly TOT columns are independent source summaries and must neither
-   * receive nor pass a rolling balance. Their opening and closing remain the
-   * direct ALG-CB less Qiddiya Balance amounts for that same TOT period.
+   * Two linked chains are maintained:
+   *
+   * 1) Weekly / Forecast movement chain
+   *      next movement opening = previous movement closing.
+   *
+   * 2) Monthly TOT summary chain
+   *      Jan TOT opening = first opening of the year;
+   *      each later month TOT opening = previous month TOT closing;
+   *      month TOT closing = month TOT opening + month TOT inflows - outflows.
+   *
+   * This ensures, for example, Jun TOT closing becomes Jul TOT opening. A
+   * restricted-cash amount shown in Jul Forecast is also reflected in Jul TOT
+   * inflows and therefore in Jul TOT closing, without being counted twice as a
+   * movement.
    */
   const openingValues = periods.map(() => 0);
   const closingValues = periods.map(() => 0);
   let previousMovementClosing = null;
+  let previousMonthlyClosing = null;
+  const firstScheduleOpening = Number(adj.find((x, i) =>
+    !isMonthlyTot(periods[i]) && !isAnnualTotal(periods[i])
+  )?.opening) || 0;
 
   periods.forEach((p, i) => {
-    if (isSummaryColumn(p)) {
+    if (isAnnualTotal(p)) {
+      // Annual comparison columns are handled separately below.
       openingValues[i] = Number(adj[i].opening) || 0;
-      closingValues[i] = Number(adj[i].closing) ||
-        (openingValues[i] + (Number(totalInflows[i]) || 0) - (Number(totalOutflows[i]) || 0));
+      closingValues[i] = Number(adj[i].closing) || 0;
+      return;
+    }
+
+    if (isMonthlyTot(p)) {
+      openingValues[i] = previousMonthlyClosing === null
+        ? firstScheduleOpening
+        : previousMonthlyClosing;
+
+      closingValues[i] = openingValues[i] +
+        (Number(totalInflows[i]) || 0) -
+        (Number(totalOutflows[i]) || 0);
+
+      previousMonthlyClosing = closingValues[i];
       return;
     }
 
