@@ -753,7 +753,16 @@ function lastNonZero(arr, field){
 
 function getQiddiyaMonth(qd, mon){
   const qsum=(qd&&qd.monthlySummary)||[];
-  return qsum.find(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase())||{};
+  const target=String(mon||'').slice(0,3).toLowerCase();
+  const matches=qsum.filter(x=>String(x.month||x.header||'').slice(0,3).toLowerCase()===target);
+  if(!matches.length) return {};
+
+  // Monthly views must use the explicit monthly TOT column.  Qiddiya Balance
+  // also contains weekly/checkpoint columns, so taking the first month match
+  // would incorrectly return (for example) Jan 1-13 instead of Jan TOT.
+  return matches.find(x=>/^TOT$/i.test(cleanText(x.period||''))) ||
+    matches.find(x=>/Forecast/i.test(cleanText(x.period||x.header||x.key||''))) ||
+    matches[matches.length-1] || {};
 }
 function getGroupMonth(group, mon){
   const gsum=monthsOnly((group&&group.monthlySummary)||[]);
@@ -890,20 +899,15 @@ function liquidityAtPeriodIndex(idx){
   const norm=v=>cleanText(v||'').toLowerCase().replace(/\s+/g,' ').trim();
   const pHeader=norm(p.header||p.month||'');
   const pPeriod=norm(p.period||'');
-  let q=qsum[idx]||{};
-  const qHeader=norm(q.header||q.month||'');
-  const qPeriod=norm(q.period||'');
-  const indexLooksAligned=(
-    (!pHeader || !qHeader || pHeader.slice(0,3)===qHeader.slice(0,3)) &&
-    (!pPeriod || !qPeriod || pPeriod===qPeriod)
-  );
-  if(!indexLooksAligned){
-    q=qsum.find(x=>{
-      const xHeader=norm(x.header||x.month||'');
-      const xPeriod=norm(x.period||'');
-      return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
-    })||{};
-  }
+  // Match by the visible period identity first. This is essential for TOT
+  // columns because an array/physical-column fallback can otherwise select the
+  // first weekly column of the month. Use source column and array index only as
+  // fallbacks when the exact heading + period pair is unavailable.
+  let q=qsum.find(x=>{
+    const xHeader=norm(x.header||x.month||'');
+    const xPeriod=norm(x.period||'');
+    return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
+  }) || qsum.find(x=>Number(x.col)===Number(p.col)) || qsum[idx] || {};
 
   const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
@@ -993,19 +997,50 @@ const currentMonth = reportDate
   );
 
   /*
-   * The ALG-CB Total Outflows row currently excludes the separate
-   * Total Supplier Payments subtotal, so include that subtotal.
+   * Supplier-payment handling.
+   *
+   * Some ALG-CB versions already include Total Supplier Payments inside
+   * Total Outflows; one earlier version omitted it for an individual period.
+   * Add the subtotal only when the component structure proves it is missing,
+   * preventing a blanket double count across the complete schedule.
    */
   const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
+  const totalOutflowSource = groupRowValues(/^Total Outflows$/i);
+  const capitalExpenses = groupRowValues(/^Capital Expenses$/i);
+  const subtotalRows = (group.rows || []).filter(r=>/^Sub Total$/i.test(cleanText(r.label||'')));
+  const tolerance = 0.75; // values are AED '000 and displayed rounded to whole thousands
 
+  const supplierSupplement = periods.map((_, i) => {
+    const supplier = Number(supplierTotal[i]) || 0;
+    if(!supplier) return 0;
+
+    const sourceTotal = Number(totalOutflowSource[i]) || 0;
+    const otherComponents = subtotalRows.reduce((sum,r)=>sum+(Number((r.values||[])[i])||0),0) +
+      (Number(capitalExpenses[i])||0);
+    const expectedIncludingSupplier = otherComponents + supplier;
+
+    if(Math.abs(sourceTotal - expectedIncludingSupplier) <= tolerance) return 0;
+    if(Math.abs((sourceTotal + supplier) - expectedIncludingSupplier) <= tolerance) return supplier;
+
+    // If component rows are unavailable/ambiguous, preserve the source total
+    // rather than risking a material double count.
+    return 0;
+  });
+
+  /*
+   * B13 is cash already held in the Group bank but economically committed to
+   * the Qiddiya project. Display the positive amount on its own row, but treat
+   * it as a negative inflow in the first current-month Forecast column so it
+   * reduces available liquidity and that Forecast closing balance exactly once.
+   */
   const totalInflows = adj.map((x, i) =>
-    (Number(x.inflows) || 0) +
-    (Number(restrictedVals[i]) || 0)
+    (Number(x.inflows) || 0) -
+    Math.abs(Number(restrictedVals[i]) || 0)
   );
 
   const totalOutflows = adj.map((x, i) =>
     (Number(x.outflows) || 0) +
-    (Number(supplierTotal[i]) || 0)
+    (Number(supplierSupplement[i]) || 0)
   );
 
   /*
@@ -1017,45 +1052,66 @@ const currentMonth = reportDate
    * Total Supplier Payments subtotal, so Opening + Inflows - Outflows always
    * agrees with Closing for weekly, forecast and monthly TOT columns.
    */
-  const isGrandTotal = p =>
+  const isSummaryColumn = p =>
+    /^TOT$/i.test(cleanText(p.period || '')) ||
     /^Total$/i.test(cleanText(p.month || p.header || ''));
 
-  const openingValues = adj.map(x => Number(x.opening) || 0);
-  const closingValues = periods.map((p, i) => {
-    if (isGrandTotal(p)) return Number(adj[i].closing) || 0;
-    return (Number(openingValues[i]) || 0) +
+  /*
+   * Weekly and Forecast columns form the movement chain:
+   *   next opening = previous calculated movement closing.
+   * Monthly TOT columns are independent source summaries and must neither
+   * receive nor pass a rolling balance. Their opening and closing remain the
+   * direct ALG-CB less Qiddiya Balance amounts for that same TOT period.
+   */
+  const openingValues = periods.map(() => 0);
+  const closingValues = periods.map(() => 0);
+  let previousMovementClosing = null;
+
+  periods.forEach((p, i) => {
+    if (isSummaryColumn(p)) {
+      openingValues[i] = Number(adj[i].opening) || 0;
+      closingValues[i] = Number(adj[i].closing) ||
+        (openingValues[i] + (Number(totalInflows[i]) || 0) - (Number(totalOutflows[i]) || 0));
+      return;
+    }
+
+    openingValues[i] = previousMovementClosing === null
+      ? (Number(adj[i].opening) || 0)
+      : previousMovementClosing;
+
+    closingValues[i] = openingValues[i] +
       (Number(totalInflows[i]) || 0) -
       (Number(totalOutflows[i]) || 0);
+
+    previousMovementClosing = closingValues[i];
   });
 
   /*
-   * The first plain TOTAL column is the current-year annual summary.
-   * Movement rows may be annual sums, but opening and closing balances are
-   * point-in-time values. Therefore:
-   *   - annual opening = first current-year opening;
-   *   - annual closing = final current-year closing before the annual TOTAL.
-   * Any following plain TOTAL column is the prior-year comparison and keeps
-   * its source values unchanged.
+   * Plain TOTAL columns at the far right are annual comparison summaries.
+   * The first plain TOTAL is the current year; the second is prior year.
+   * Opening and closing are point-in-time balances, not annual sums:
+   *   current-year TOTAL opening = first opening of the current-year schedule;
+   *   current-year TOTAL closing = final closing immediately before that TOTAL.
+   * Prior-year comparison values remain exactly as supplied by ALG-CB less
+   * Qiddiya Balance. This adjustment must not alter weekly/forecast rolling.
    */
-  const grandTotalIndices = periods
-    .map((p, i) => isGrandTotal(p) ? i : -1)
+  const plainTotalIndices = periods
+    .map((p, i) => /^Total$/i.test(cleanText(p.month || p.header || '')) ? i : -1)
     .filter(i => i >= 0);
 
-  if (grandTotalIndices.length) {
-    const currentYearTotalIdx = grandTotalIndices[0];
+  if (plainTotalIndices.length) {
+    const currentYearTotalIdx = plainTotalIndices[0];
     const firstCurrentYearIdx = periods.findIndex((p, i) =>
-      i < currentYearTotalIdx && !isGrandTotal(p)
+      i < currentYearTotalIdx && !/^Total$/i.test(cleanText(p.month || p.header || ''))
     );
-
     let finalCurrentYearIdx = currentYearTotalIdx - 1;
-    while (finalCurrentYearIdx >= 0 && isGrandTotal(periods[finalCurrentYearIdx])) {
+    while (finalCurrentYearIdx >= 0 && /^Total$/i.test(cleanText(periods[finalCurrentYearIdx].month || periods[finalCurrentYearIdx].header || ''))) {
       finalCurrentYearIdx -= 1;
     }
 
     if (firstCurrentYearIdx >= 0) {
       openingValues[currentYearTotalIdx] = Number(openingValues[firstCurrentYearIdx]) || 0;
     }
-
     if (finalCurrentYearIdx >= 0) {
       closingValues[currentYearTotalIdx] = Number(closingValues[finalCurrentYearIdx]) || 0;
     }
@@ -1265,7 +1321,6 @@ function renderLiquidityPeriodTable(){
   if(!periods.length || !detailRows.length) return '<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
   const selected=liquidityColumnSelection(periods);
   const shownPeriods=selected.map(i=>periods[i]);
-
   const reportDate=reportingDateObject();
   const reportYear=reportDate?reportDate.getFullYear():new Date().getFullYear();
   let plainTotalCount=0;
@@ -1280,7 +1335,6 @@ function renderLiquidityPeriodTable(){
         : `TOTAL ${plainTotalCount}`;
     return `<th>${escapeHtml(label)}</th>`;
   }).join('');
-
   const body=detailRows.map(r=>{
     if(r.type==='section') return `<tr class="section"><td colspan="${shownPeriods.length+1}">${escapeHtml(r.label)}</td></tr>`;
     const lc=(r.label||'').toLowerCase();
