@@ -342,41 +342,144 @@ function ensureMgmtDefaults(){
   localStorage.setItem('cf_google_sheet_url', saved);
 }
 
+function exeCellInfo(cell){
+  if(cell === null || cell === undefined) return {text:'', bold:false, italic:false};
+  if(typeof cell !== 'object') return {text:cleanText(cell), bold:false, italic:false};
+
+  const raw = cell.formattedValue ?? cell.displayValue ?? cell.text ?? cell.value ?? '';
+  const fmt = cell.textFormat || cell.format || cell.userEnteredFormat?.textFormat || cell.effectiveFormat?.textFormat || {};
+  return {
+    text: cleanText(raw),
+    bold: Boolean(cell.bold ?? fmt.bold),
+    italic: Boolean(cell.italic ?? fmt.italic)
+  };
+}
+
 function parseExeSummary(matrix){
   const rows=Array.isArray(matrix)?matrix:[];
   const blocks=[];
-  rows.forEach(r=>{
-    const cells=(Array.isArray(r)?r:[]).map(c=>cleanText(c)).filter(Boolean);
-    if(!cells.length) return;
-    const first=cells[0];
-    const text=cells.length>1 ? cells.join(' ') : first;
-    blocks.push(text);
+  rows.forEach((r,rowIndex)=>{
+    const row=Array.isArray(r)?r:[r];
+    const cells=row.map(exeCellInfo).filter(c=>c.text);
+    if(!cells.length){
+      // Preserve the Google Sheet's blank-row spacing.
+      if(blocks.length && blocks[blocks.length-1].type!=='spacer') blocks.push({type:'spacer',rowIndex});
+      return;
+    }
+    blocks.push({
+      type:'content',
+      rowIndex,
+      text:cells.map(c=>c.text).join(' '),
+      bold:cells.some(c=>c.bold),
+      italic:cells.some(c=>c.italic)
+    });
   });
+  while(blocks.length && blocks[blocks.length-1].type==='spacer') blocks.pop();
   return blocks;
 }
+
+function ensureExecNarrativeStyles(){
+  if(document.getElementById('execNarrativeBoardStyles')) return;
+  const style=document.createElement('style');
+  style.id='execNarrativeBoardStyles';
+  style.textContent=`
+    .exec-board-paper{max-width:1100px;margin:0 auto;color:#17233b;line-height:1.65}
+    .exec-board-title{margin:0;padding:22px 24px;background:linear-gradient(135deg,#102a56,#244f86);color:#fff;border-radius:14px 14px 0 0;font-size:25px;line-height:1.25;font-weight:800;letter-spacing:.1px}
+    .exec-board-date{display:flex;gap:8px;align-items:center;padding:11px 24px;background:#edf3fb;border:1px solid #d8e2ef;border-top:0;font-weight:700;color:#29466f}
+    .exec-board-content{padding:10px 24px 24px;border:1px solid #e0e7f0;border-top:0;border-radius:0 0 14px 14px;background:#fff}
+    .exec-board-section{margin:22px 0 0;padding:0 0 7px;border-bottom:2px solid #dbe5f0;color:#173d6f;font-size:18px;line-height:1.35;font-weight:800}
+    .exec-board-subsection{margin:17px 0 5px;color:#264f7e;font-size:15px;font-weight:800}
+    .exec-board-paragraph{margin:8px 0 0;text-align:left;color:#27364d}
+    .exec-board-list{margin:8px 0 0 20px;padding:0;color:#27364d}
+    .exec-board-list li{margin:5px 0;padding-left:3px}
+    .exec-board-spacer{height:9px}
+    .exec-board-emphasis{font-weight:800;color:#102f5d;white-space:nowrap}
+    .exec-board-source-bold{font-weight:800}
+    .exec-board-italic{font-style:italic}
+    @media print{
+      .exec-board-paper{max-width:none}.exec-board-title{background:#102a56!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .exec-board-content,.exec-board-date{break-inside:avoid}
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function formatExecutiveInline(text){
+  let safe=escapeHtml(String(text||''));
+  // Optional markdown-style bold, useful when the Apps Script endpoint sends plain values only.
+  safe=safe.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  // Automatically emphasise management figures without changing their wording.
+  safe=safe.replace(/\b(AED|SAR|OMR|USD)\s*[\d,.]+(?:\s*(?:K|M|BN|B))?\b/gi,'<strong class="exec-board-emphasis">$&</strong>');
+  safe=safe.replace(/\b\d+(?:\.\d+)?%\b/g,'<strong class="exec-board-emphasis">$&</strong>');
+  return safe;
+}
+
+function executiveBlockText(block){
+  return typeof block==='string' ? String(block).trim() : String(block?.text||'').trim();
+}
+
+function isExecutiveHeading(text, sourceBold, index){
+  if(index===0) return 'title';
+  if(/^reporting\s+date\s*:/i.test(text)) return 'date';
+  if(/^[-•]\s+/.test(text) || /^\d+[.)]\s+/.test(text)) return 'list';
+  const endsLikeSentence=/[.!?;:]$/.test(text);
+  const words=text.split(/\s+/).filter(Boolean).length;
+  const known=/^(executive summary|cash position|cash collection|working capital|cash outflows?|cash inflows?|airport project|project status|revenue|cost|capex|items under review|other fixed payments|dividend|cash preservation|key financial priorities|dewa|funding|collections?)/i.test(text);
+  if(sourceBold && words<=18 && text.length<=120) return 'section';
+  if(known && words<=18 && text.length<=120) return 'section';
+  if(!endsLikeSentence && words<=10 && text.length<=85) return 'section';
+  return 'paragraph';
+}
+
 function renderExeSummaryBlocks(blocks){
   if(!$('execNarrative')) return;
-  if(!Array.isArray(blocks) || !blocks.length){
+  if(!Array.isArray(blocks) || !blocks.some(b=>executiveBlockText(b))){
     $('execNarrative').innerHTML='<div class="empty">No Executive Summary text was found in the Exe Sum tab.</div>';
     return;
   }
-  const sectionTitles=new Set(['Executive Summary','Cash Preservation and Cost Optimization Measures','Items Under Review','Key financial priorities in such a scenario would include:','Other fixed payments','Dividend','-Proposed Dividend Distribution and GCI Fee Settlement']);
-  let html='';
-  blocks.forEach((b,idx)=>{
-    const t=String(b||'').trim(); if(!t) return;
-    const isNum=/^\d+\s+/.test(t);
-    const isBullet=/^(Accelerating|Deferring|Negotiating|Following Actions)/i.test(t);
-    if(idx===0 || sectionTitles.has(t) || (!isNum && t.length<90 && /Measures|Review|Dividend|Summary|payments|priorities|Actions/i.test(t))){
-      html+=`<h3>${escapeHtml(t)}</h3>`;
-    }else if(isNum){
-      html+=`<p style="margin-left:14px"><strong>${escapeHtml(t.slice(0,1))}.</strong> ${escapeHtml(t.slice(1).trim())}</p>`;
-    }else if(isBullet){
-      html+=`<p style="margin-left:18px">• ${escapeHtml(t)}</p>`;
-    }else{
-      html+=`<p>${escapeHtml(t)}</p>`;
+  ensureExecNarrativeStyles();
+
+  const content=blocks.filter(b=>typeof b==='string' || b?.type==='spacer' || executiveBlockText(b));
+  let title='Executive Management Commentary';
+  let dateHtml='';
+  let body='';
+  let contentIndex=0;
+  let listOpen=false;
+
+  const closeList=()=>{ if(listOpen){ body+='</ul>'; listOpen=false; } };
+
+  content.forEach(block=>{
+    if(typeof block!=='string' && block?.type==='spacer'){
+      closeList(); body+='<div class="exec-board-spacer" aria-hidden="true"></div>'; return;
     }
+    const text=executiveBlockText(block); if(!text) return;
+    const sourceBold=typeof block==='object' && Boolean(block.bold);
+    const sourceItalic=typeof block==='object' && Boolean(block.italic);
+    const kind=isExecutiveHeading(text,sourceBold,contentIndex);
+    contentIndex++;
+
+    if(kind==='title'){
+      title=text; return;
+    }
+    if(kind==='date'){
+      const parts=text.split(/:(.+)/);
+      dateHtml=`<div class="exec-board-date"><span>${escapeHtml(parts[0]||'Reporting Date')}:</span><strong>${formatExecutiveInline(parts[1]||'')}</strong></div>`;
+      return;
+    }
+    if(kind==='list'){
+      if(!listOpen){ body+='<ul class="exec-board-list">'; listOpen=true; }
+      const item=text.replace(/^[-•]\s+/,'').replace(/^\d+[.)]\s+/,'');
+      body+=`<li>${formatExecutiveInline(item)}</li>`;
+      return;
+    }
+    closeList();
+    const classes=[sourceBold?'exec-board-source-bold':'',sourceItalic?'exec-board-italic':''].filter(Boolean).join(' ');
+    if(kind==='section') body+=`<h3 class="exec-board-section ${classes}">${formatExecutiveInline(text)}</h3>`;
+    else body+=`<p class="exec-board-paragraph ${classes}">${formatExecutiveInline(text)}</p>`;
   });
-  $('execNarrative').innerHTML=html || '<div class="empty">No Executive Summary text was found in the Exe Sum tab.</div>';
+  closeList();
+
+  $('execNarrative').innerHTML=`<article class="exec-board-paper"><h2 class="exec-board-title">${formatExecutiveInline(title)}</h2>${dateHtml}<div class="exec-board-content">${body}</div></article>`;
 }
 function periodHeaderHTML(periods, cols){
   return `<tr><th rowspan="2">Cash flow line</th>${cols.map(i=>`<th>${escapeHtml(periods[i]?.month||'')}</th>`).join('')}</tr><tr>${cols.map(i=>`<th>${escapeHtml(periods[i]?.period||periods[i]?.header||'')}</th>`).join('')}</tr>`;
