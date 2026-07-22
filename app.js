@@ -1109,9 +1109,29 @@ const currentMonth = reportDate
         ? firstScheduleOpening
         : previousMonthlyClosing;
 
-      closingValues[i] = openingValues[i] +
-        (Number(totalInflows[i]) || 0) -
-        (Number(totalOutflows[i]) || 0);
+      /*
+       * A monthly TOT is a summary of that month's movement columns, not an
+       * additional cash-flow period. Its closing must therefore equal the last
+       * calculated weekly/forecast closing for the same month. Recalculating
+       * the TOT closing from source monthly totals can deduct the Qiddiya
+       * monthly outflow a second time (for July this created the AED 794 gap).
+       */
+      let lastMovementClosingForMonth = null;
+      for (let j = i - 1; j >= 0; j -= 1) {
+        const prior = periods[j] || {};
+        if (String(prior.month || prior.header || '').slice(0, 3) !==
+            String(p.month || p.header || '').slice(0, 3)) break;
+        if (!isMonthlyTot(prior) && !isAnnualTotal(prior)) {
+          lastMovementClosingForMonth = Number(closingValues[j]);
+          if (Number.isFinite(lastMovementClosingForMonth)) break;
+        }
+      }
+
+      closingValues[i] = Number.isFinite(lastMovementClosingForMonth)
+        ? lastMovementClosingForMonth
+        : openingValues[i] +
+          (Number(totalInflows[i]) || 0) -
+          (Number(totalOutflows[i]) || 0);
 
       previousMonthlyClosing = closingValues[i];
       return;
