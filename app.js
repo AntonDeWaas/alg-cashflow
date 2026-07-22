@@ -1330,33 +1330,79 @@ function liquidityDetailPeriodRows_backup(){
   addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
   return {periods, rows};
 }
+function liquidityPeriodMeta(period){
+  const text=cleanText(period?.period||period?.header||period?.key||'');
+  const month=String(period?.month||period?.header||period?.key||'').slice(0,3);
+  return {
+    month,
+    isTot:/\bTOT\b|^Total$/i.test(text) || /^Total$/i.test(cleanText(period?.month||period?.header||'')),
+    isForecast:/Forecast/i.test(text)
+  };
+}
+function ensureLiquidityFriendlyStyles(){
+  if(typeof document==='undefined' || document.getElementById('liquidityFriendlyStyles')) return;
+  const style=document.createElement('style');
+  style.id='liquidityFriendlyStyles';
+  style.textContent=`
+    .sticky-report{border-collapse:separate;border-spacing:0;min-width:max-content;}
+    .sticky-report thead th{position:sticky;top:0;z-index:8;background:#f7f2e7;box-shadow:0 2px 0 #d6c8aa;}
+    .sticky-report th:first-child,.sticky-report td.rowhead{position:sticky;left:0;z-index:6;background:#fffaf0;box-shadow:2px 0 0 #e1d7c2;}
+    .sticky-report thead th:first-child{z-index:12;background:#f7f2e7;}
+    .sticky-report th.period-tot,.sticky-report td.period-tot{background:#fff1c9!important;border-left:2px solid #c99b38;border-right:2px solid #c99b38;font-weight:700;}
+    .sticky-report th.period-current,.sticky-report td.period-current{background:#eef7f4;}
+    .sticky-report th.period-forecast,.sticky-report td.period-forecast{background:#fbe9e5;}
+    .sticky-report tr.balance-opening td{position:sticky;top:34px;z-index:5;background:#fff8df!important;font-weight:800;border-bottom:2px solid #c99b38;}
+    .sticky-report tr.balance-opening td.rowhead{z-index:10;}
+    .sticky-report tr.balance-closing td{position:sticky;bottom:0;z-index:5;background:#eef7f4!important;font-weight:800;border-top:2px solid #0f6e5a;}
+    .sticky-report tr.balance-closing td.rowhead{z-index:10;}
+    .sticky-report tr.total td{font-weight:700;}
+  `;
+  document.head.appendChild(style);
+}
+function ensureLiquidityViewOptions(){
+  const el=$('liquidityViewMode');
+  if(!el) return;
+  const desired=[
+    ['current','Smart Period View'],
+    ['weekly','Weekly Detail'],
+    ['monthly','Monthly Summary']
+  ];
+  const existing=new Set(Array.from(el.options||[]).map(o=>o.value));
+  desired.forEach(([value,label])=>{
+    let opt=Array.from(el.options||[]).find(o=>o.value===value);
+    if(!opt){ opt=document.createElement('option'); opt.value=value; el.appendChild(opt); }
+    opt.textContent=label;
+  });
+  Array.from(el.options||[]).forEach(o=>{ if(!desired.some(([v])=>v===o.value)) o.remove(); });
+  if(!['current','weekly','monthly'].includes(el.value)) el.value='current';
+}
 function liquidityColumnSelection(periods){
+  ensureLiquidityViewOptions();
   const modeEl=$('liquidityViewMode');
   const mode=modeEl?modeEl.value:'current';
   const monthOrder={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-  const isTot=(p)=>/\bTOT\b|^Total$/i.test(cleanText(p.period||p.header||p.key||''));
-  const isForecast=(p)=>/Forecast/i.test(cleanText(p.period||p.header||p.key||''));
+  const isTot=(p)=>liquidityPeriodMeta(p).isTot;
+  const isForecast=(p)=>liquidityPeriodMeta(p).isForecast;
   const byMonth={};
-  periods.forEach((p,i)=>{ const m=String(p.month||p.header||'').slice(0,3); if(monthOrder[m]!==undefined){ if(!byMonth[m]) byMonth[m]=[]; byMonth[m].push(i); } });
+  periods.forEach((p,i)=>{ const m=liquidityPeriodMeta(p).month; if(monthOrder[m]!==undefined){ if(!byMonth[m]) byMonth[m]=[]; byMonth[m].push(i); } });
   const totIdxFor=(m)=> (byMonth[m]||[]).find(i=>isTot(periods[i]));
   if(mode==='weekly'){
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows all weekly, forecast and total columns exactly as read from ALG-CB.';
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows every weekly, forecast and monthly total column from ALG-CB.';
     return periods.map((_,i)=>i);
   }
   if(mode==='monthly'){
     const selected=[];
     Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly TOT Only shows only the monthly total columns for quick management review.';
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly Summary shows January to December monthly TOT columns only.';
     return selected.length?selected:periods.map((_,i)=>i);
   }
-  // Current reporting period: completed months = TOT, current month = weekly columns up to reporting date + forecast + TOT, future months = TOT
   const rpt=getCurrentReportingPeriodInfo();
   if(!rpt){
     const selected=[]; Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period could not find a reporting date, so monthly totals are shown.';
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Smart Period View could not identify the reporting month, so monthly totals are shown.';
     return selected.length?selected:periods.map((_,i)=>i);
   }
-  const curMonth=String(rpt.period.month||rpt.period.header||'').slice(0,3);
+  const curMonth=liquidityPeriodMeta(rpt.period).month;
   const curOrder=monthOrder[curMonth];
   const selected=[];
   Object.keys(monthOrder).forEach(m=>{
@@ -1367,16 +1413,15 @@ function liquidityColumnSelection(periods){
       const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx);
       return;
     }
-    // Current month: show weekly/current columns up to reporting period, plus forecast and total.
-    indices.forEach(i=>{
-      const p=periods[i];
-      if(i<=rpt.index || isForecast(p) || isTot(p)) selected.push(i);
-    });
+    // Active month: show all weekly columns, Forecast and TOT together.
+    indices.forEach(i=>selected.push(i));
   });
-  if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period shows completed months as totals, the active month by week/forecast, and future months as totals.';
+  if($('liquidityViewNote')) $('liquidityViewNote').textContent='Smart Period View shows completed months as TOT, the current month by week plus Forecast and TOT, and future months as TOT.';
   return [...new Set(selected)].filter(i=>i>=0 && i<periods.length).sort((a,b)=>a-b);
 }
 function renderLiquidityPeriodTable(){
+  ensureLiquidityFriendlyStyles();
+  ensureLiquidityViewOptions();
   const pack=liquidityDetailPeriodRows();
   const periods=pack.periods||[];
   const detailRows=pack.rows||[];
@@ -1385,17 +1430,22 @@ function renderLiquidityPeriodTable(){
   const shownPeriods=selected.map(i=>periods[i]);
   const reportDate=reportingDateObject();
   const reportYear=reportDate?reportDate.getFullYear():new Date().getFullYear();
+  const rpt=getCurrentReportingPeriodInfo();
+  const currentMonth=rpt?liquidityPeriodMeta(rpt.period).month:'';
   let plainTotalCount=0;
-  const headers=shownPeriods.map(p=>{
+  const columnClasses=shownPeriods.map(p=>{
+    const meta=liquidityPeriodMeta(p);
+    return [meta.isTot?'period-tot':'',meta.month===currentMonth?'period-current':'',meta.isForecast?'period-forecast':''].filter(Boolean).join(' ');
+  });
+  const headers=shownPeriods.map((p,j)=>{
     const isPlainTotal=/^Total$/i.test(cleanText(p.month||p.header||''));
-    if(!isPlainTotal) return `<th>${escapeHtml(periodShortLabel(p))}</th>`;
-    plainTotalCount+=1;
-    const label=plainTotalCount===1
-      ? `${reportYear} TOTAL`
-      : plainTotalCount===2
-        ? `${reportYear-1} TOTAL`
-        : `TOTAL ${plainTotalCount}`;
-    return `<th>${escapeHtml(label)}</th>`;
+    let label;
+    if(!isPlainTotal) label=periodShortLabel(p);
+    else {
+      plainTotalCount+=1;
+      label=plainTotalCount===1?`${reportYear} TOTAL`:plainTotalCount===2?`${reportYear-1} TOTAL`:`TOTAL ${plainTotalCount}`;
+    }
+    return `<th class="${columnClasses[j]}">${escapeHtml(label)}</th>`;
   }).join('');
   const body=detailRows.map(r=>{
     if(r.type==='section') return `<tr class="section"><td colspan="${shownPeriods.length+1}">${escapeHtml(r.label)}</td></tr>`;
@@ -1403,11 +1453,13 @@ function renderLiquidityPeriodTable(){
     const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
     const allVals=(r.values||[]).map(v=>Number(v)||0);
     const vals=selected.map(i=>allVals[i]||0);
-    const rowClass=r.type==='total'?' class="total"':'';
-    return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}</tr>`;
+    const balanceClass=/Estimated Cash Balance Opening/i.test(r.label||'')?' balance-opening':/Estimated Cash Balance Closing/i.test(r.label||'')?' balance-closing':'';
+    const rowClass=(r.type==='total'?' total':'')+balanceClass;
+    return `<tr class="${rowClass.trim()}"><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map((v,j)=>`<td class="num ${klass} ${columnClasses[j]}">${fmt(v)}</td>`).join('')}</tr>`;
   }).join('');
   return `<table class="sticky-report"><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
 }
+
 function liquidityDetailRows(){
   const group=FORECAST_DATA.group||{};
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
