@@ -111,36 +111,103 @@
     return headers.length - 1;
   }
 
-  function buildModel(rows) {
-    const matrix = trimMatrix(rows);
-    if (!matrix.length) return null;
+  function normalizeMatrix(rows) {
+    if (!Array.isArray(rows)) return [];
+    let first = rows.findIndex(rowHasContent);
+    let last = rows.length - 1;
+    while (last >= 0 && !rowHasContent(rows[last])) last--;
+    if (first < 0 || last < first) return [];
 
-    const headerIndex = findHeaderIndex(matrix);
-    if (headerIndex < 0) {
-      return {
-        matrix,
-        headerIndex: -1,
-        title: 'Capital Expenditure (CAPEX) Summary',
-        headers: [],
-        body: matrix,
-        totalColumn: -1
-      };
+    const slice = rows.slice(first, last + 1);
+    let maxCol = 0;
+    slice.forEach(row => {
+      if (!Array.isArray(row)) return;
+      for (let i = row.length - 1; i >= 0; i--) {
+        if (clean(row[i]) !== '') {
+          maxCol = Math.max(maxCol, i + 1);
+          break;
+        }
+      }
+    });
+    return slice.map(row => Array.from({ length: maxCol }, (_, i) =>
+      Array.isArray(row) && row[i] != null ? row[i] : ''
+    ));
+  }
+
+  function buildBlock(matrix, summaryIndex, nextSummaryIndex) {
+    const summaryLabel = clean(matrix[summaryIndex] && matrix[summaryIndex][0]);
+    const yearMatch = summaryLabel.match(/\b(20\d{2})\b/);
+    const year = yearMatch ? Number(yearMatch[1]) : null;
+    const limit = nextSummaryIndex == null ? matrix.length : nextSummaryIndex;
+
+    let headerIndex = -1;
+    for (let i = summaryIndex + 1; i < limit; i++) {
+      const candidate = findHeaderIndex([matrix[i]]);
+      if (candidate === 0) {
+        headerIndex = i;
+        break;
+      }
     }
+    if (headerIndex < 0) return null;
 
-    const titleRow = matrix.slice(0, headerIndex).find(row =>
-      /capital expenditure|capex/i.test(clean(row[0]))
-    );
-    const title = titleRow ? clean(titleRow[0]) : 'Capital Expenditure (CAPEX) Summary';
+    let bodyEnd = limit;
+    while (bodyEnd > headerIndex + 1 && !rowHasContent(matrix[bodyEnd - 1])) bodyEnd--;
     const headers = matrix[headerIndex].map(clean);
-    const body = matrix.slice(headerIndex + 1);
+    const body = matrix.slice(headerIndex + 1, bodyEnd);
 
     return {
+      year,
+      label: summaryLabel || (year ? 'Capex Summary ' + year : 'Capex Summary'),
       matrix,
       headerIndex,
-      title,
       headers,
       body,
       totalColumn: detectTotalColumn(headers)
+    };
+  }
+
+  function buildReport(rows) {
+    const matrix = normalizeMatrix(rows);
+    if (!matrix.length) return null;
+
+    const summaryIndexes = [];
+    matrix.forEach((row, index) => {
+      if (/^capex summary\b/i.test(clean(row[0]))) summaryIndexes.push(index);
+    });
+
+    const blocks = [];
+    summaryIndexes.forEach((summaryIndex, i) => {
+      const block = buildBlock(matrix, summaryIndex, summaryIndexes[i + 1]);
+      if (block) blocks.push(block);
+    });
+
+    // Fallback for a sheet with one table but no "Capex Summary YYYY" row.
+    if (!blocks.length) {
+      const headerIndex = findHeaderIndex(matrix);
+      if (headerIndex >= 0) {
+        const titleRow = matrix.slice(0, headerIndex).find(row =>
+          /capital expenditure|capex/i.test(clean(row[0]))
+        );
+        blocks.push({
+          year: null,
+          label: titleRow ? clean(titleRow[0]) : 'Capex Summary',
+          matrix,
+          headerIndex,
+          headers: matrix[headerIndex].map(clean),
+          body: matrix.slice(headerIndex + 1),
+          totalColumn: detectTotalColumn(matrix[headerIndex].map(clean))
+        });
+      }
+    }
+
+    const titleRow = matrix.find(row =>
+      /capital expenditure.*forecast|capex.*investment.*summary/i.test(clean(row[0]))
+    );
+
+    return {
+      title: titleRow ? clean(titleRow[0]) : 'Capital Expenditure (CAPEX) Summary',
+      matrix,
+      blocks
     };
   }
 
@@ -175,7 +242,13 @@
     return '—';
   }
 
+  function selectKpiBlock(report) {
+    if (!report || !report.blocks.length) return null;
+    return report.blocks.find(block => block.year === 2026) || report.blocks[0];
+  }
+
   function renderKpis(model) {
+    if (!model) return '';
     const grand = locateGrandTotal(model);
     const unassigned = locateUnassigned(model);
     const total = grand && model.totalColumn >= 0 ? numberValue(grand[model.totalColumn]) : null;
@@ -184,12 +257,13 @@
       : null;
     const assigned = total != null && unassignedTotal != null ? total - unassignedTotal : null;
     const assignedPct = total ? (assigned / total) * 100 : null;
+    const yearLabel = model.year || 2026;
 
     const items = [
-      ['Total CAPEX', total, "AED '000"],
-      ['Assigned CAPEX', assigned, assignedPct == null ? 'Project allocation' : assignedPct.toFixed(1) + '% allocated'],
-      ['Unassigned CAPEX', unassignedTotal, 'Future allocation'],
-      ['CAPEX Sections', sectionCount(model), latestPlannedMonth(model, grand) + ' latest planned month']
+      ['Total CAPEX ' + yearLabel, total, "AED '000"],
+      ['Assigned CAPEX ' + yearLabel, assigned, assignedPct == null ? 'Project allocation' : assignedPct.toFixed(1) + '% allocated'],
+      ['Unassigned CAPEX ' + yearLabel, unassignedTotal, 'Future allocation'],
+      ['CAPEX Sections ' + yearLabel, sectionCount(model), latestPlannedMonth(model, grand) + ' latest planned month']
     ];
 
     return items.map(item => {
@@ -208,15 +282,6 @@
   function renderTable(model) {
     if (!model) return '<div class="empty">No CAPEX data is available.</div>';
 
-    if (model.headerIndex < 0) {
-      const rows = model.matrix.map(row =>
-        '<tr>' + row.map((cell, i) =>
-          `<td class="${i === 0 ? 'rowhead' : 'num'}">${i === 0 ? esc(cell) : formatNumber(cell)}</td>`
-        ).join('') + '</tr>'
-      ).join('');
-      return `<div class="capex-table-wrap"><table class="capex-table"><tbody>${rows}</tbody></table></div>`;
-    }
-
     const head = model.headers.map((header, i) =>
       `<th class="${i === 0 ? 'capex-desc-col' : ''} ${i === model.totalColumn ? 'capex-total-col' : ''}">
         ${esc(header || (i === 0 ? 'Description' : ''))}
@@ -224,6 +289,7 @@
     ).join('');
 
     const body = model.body.map((row, bodyIndex) => {
+      if (!rowHasContent(row)) return '';
       const absoluteIndex = model.headerIndex + 1 + bodyIndex;
       const kind = classifyRow(row, absoluteIndex, model.headerIndex);
 
@@ -255,12 +321,15 @@
     }).join('');
 
     return `
-      <div class="capex-table-wrap">
-        <table class="capex-table sticky-report">
-          <thead><tr>${head}</tr></thead>
-          <tbody>${body}</tbody>
-        </table>
-      </div>`;
+      <section class="capex-year-block" data-capex-year="${esc(model.year || '')}">
+        <div class="capex-year-heading">${esc(model.label)}</div>
+        <div class="capex-table-wrap">
+          <table class="capex-table sticky-report">
+            <thead><tr>${head}</tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+      </section>`;
   }
 
   function render() {
@@ -269,8 +338,8 @@
     const subtitle = byId('capexSubtitle');
     if (!root || !kpis) return;
 
-    const model = buildModel(MODULE.data);
-    if (!model) {
+    const report = buildReport(MODULE.data);
+    if (!report || !report.blocks.length) {
       kpis.innerHTML = '';
       root.innerHTML = `
         <div class="empty">
@@ -287,8 +356,9 @@
       "Values displayed in AED '000"
     ].filter(Boolean).join(' · ');
 
-    kpis.innerHTML = renderKpis(model);
-    root.innerHTML = renderTable(model);
+    const kpiBlock = selectKpiBlock(report);
+    kpis.innerHTML = renderKpis(kpiBlock);
+    root.innerHTML = report.blocks.map(renderTable).join('');
   }
 
   function injectStyles() {
@@ -299,6 +369,10 @@
       #view-capex .capex-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
       #view-capex .capex-actions{display:flex;gap:8px;align-items:center}
       #view-capex .capex-kpi .val{font-size:1.55rem}
+      #view-capex .capex-year-block{margin-top:30px}
+      #view-capex .capex-year-block:first-child{margin-top:10px}
+      #view-capex .capex-year-heading{padding:10px 12px;background:#48c3d3;color:#062a3c;font-weight:900;font-size:1.05rem;border-radius:10px 10px 0 0}
+      #view-capex .capex-year-block .capex-table-wrap{border-radius:0 0 10px 10px}
       #view-capex .capex-table-wrap{overflow:auto;max-width:100%;border:1px solid var(--line,#ded8cb);border-radius:10px}
       #view-capex .capex-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;background:#fff}
       #view-capex .capex-table th,#view-capex .capex-table td{white-space:nowrap;padding:9px 11px;border-bottom:1px solid #ece8df}
