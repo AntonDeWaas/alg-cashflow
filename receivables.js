@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v14
+// Receivables Intelligence Module v15
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -28,7 +28,58 @@ function hmap(headers){const m={};headers.forEach((h,i)=>{const n=norm(h);if(!n)
 ['0_30',/^(a)?030$|^0to30$|^1m/],['31_60',/^3160$|^31to60$|^2m/],['61_90',/^6190$|^61to90$|^3m/],['91_120',/^91120$|^91to120$|^4m/],['121_150',/^121150$|^121to150$|^5m/],['151_180',/^151180$|^151to180$|^6m/],['181_210',/^181210$|^181to210$|^7m/],['211_240',/^211240$|^211to240$|^8m/],['241_270',/^241270$|^241to270$|^9m/],['271_300',/^271300$|^271to300$|^10m/],['301_330',/^301330$|^301to330$|^11m/],['331_365',/^331365$|^331to365$|^12m/],['366_730',/^366730$|^>1yr/],['gt731',/^>731$|^>2yr/],['gt180',/^>180$|^over180/],['gt90',/^>90$|^above90days|^over90/]
 ].forEach(([k,rx])=>{if(m[k]==null&&rx.test(n))m[k]=i})});return m}
 const BK=['0_30','31_60','61_90','91_120','121_150','151_180','181_210','211_240','241_270','271_300','301_330','331_365','366_730','gt731'];
-function parseEntity(e){const src=first(e.sheets);if(!src)return{entity:e,rows:[]};const m=src.matrix,h=headerRow(m);if(h<0)return{entity:e,rows:[]};const map=hmap((m[h]||[]).map(clean)),rows=[];for(let i=h+1;i<m.length;i++){const r=m[i]||[],customer=clean(r[map.customer]),division=clean(r[map.division]),total=num(r[map.total]);if(!customer||/^total$|^check$/i.test(customer))continue;const b={};BK.forEach(k=>b[k]=map[k]==null?0:num(r[map[k]]));if(!total&&!BK.some(k=>b[k]))continue;const over90=map.gt90==null?BK.slice(3).reduce((a,k)=>a+b[k],0):num(r[map.gt90]);const over180=map.gt180==null?BK.slice(6).reduce((a,k)=>a+b[k],0):num(r[map.gt180]);rows.push({customer,code:clean(r[map.code]),division:division||'Unassigned',total,over90,over180,buckets:b,fx:e.fx,totalAED:total*e.fx,over90AED:over90*e.fx,over180AED:over180*e.fx})}return{entity:e,source:src.name,rows}}
+function parseEntity(e){
+  const src=first(e.sheets);
+  if(!src)return{entity:e,rows:[]};
+
+  const m=src.matrix,h=headerRow(m);
+  if(h<0)return{entity:e,rows:[]};
+
+  const map=hmap((m[h]||[]).map(clean)),rows=[];
+
+  for(let i=h+1;i<m.length;i++){
+    const r=m[i]||[],
+      customer=clean(r[map.customer]),
+      division=clean(r[map.division]),
+      total=Math.max(0,num(r[map.total]));
+
+    if(!customer||/^total$|^check$/i.test(customer))continue;
+
+    const b={};
+    BK.forEach(k=>b[k]=map[k]==null?0:Math.max(0,num(r[map[k]])));
+
+    if(!total&&!BK.some(k=>b[k]))continue;
+
+    // Derive overdue balances only from the detailed aging buckets.
+    // The summary columns (>90 / >180) in the ERP sheet can sit in a
+    // separate report block and may not align with the customer row.
+    const bucketTotal=BK.reduce((a,k)=>a+b[k],0);
+    const bucketOver90=BK.slice(3).reduce((a,k)=>a+b[k],0);
+    const bucketOver180=BK.slice(6).reduce((a,k)=>a+b[k],0);
+
+    // Never allow an aging balance to exceed the customer's total.
+    // This also protects ALU and ALIS from misaligned summary columns.
+    const reliableBase=total>0?total:bucketTotal;
+    const over90=Math.min(reliableBase,Math.max(0,bucketOver90));
+    const over180=Math.min(over90,Math.max(0,bucketOver180));
+
+    rows.push({
+      customer,
+      code:clean(r[map.code]),
+      division:division||'Unassigned',
+      total:reliableBase,
+      over90,
+      over180,
+      buckets:b,
+      fx:e.fx,
+      totalAED:reliableBase*e.fx,
+      over90AED:over90*e.fx,
+      over180AED:over180*e.fx
+    });
+  }
+
+  return{entity:e,source:src.name,rows};
+}
 function parseAll(){S.parsed={};C.entities.filter(e=>e.id!=='GROUP').forEach(e=>S.parsed[e.id]=parseEntity(e))}
 function rows(){return S.entity==='GROUP'?Object.values(S.parsed).flatMap(x=>x.rows):(S.parsed[S.entity]||{rows:[]}).rows}
 function aggregate(rs){const o={total:0,over90:0,over180:0,current:0,customers:rs.length,divisions:{},buckets:{}};BK.forEach(k=>o.buckets[k]=0);rs.forEach(r=>{const f=S.entity==='GROUP'?r.fx:1,t=S.entity==='GROUP'?r.totalAED:r.total,o90=S.entity==='GROUP'?r.over90AED:r.over90,o180=S.entity==='GROUP'?r.over180AED:r.over180;o.total+=t;o.over90+=o90;o.over180+=o180;o.current+=t-o90;if(!o.divisions[r.division])o.divisions[r.division]={total:0,over90:0,over180:0};o.divisions[r.division].total+=t;o.divisions[r.division].over90+=o90;o.divisions[r.division].over180+=o180;BK.forEach(k=>o.buckets[k]+=(r.buckets[k]||0)*f)});return o}
