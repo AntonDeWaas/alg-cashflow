@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v16
+// Receivables Intelligence Module v17
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -87,7 +87,7 @@ function parseAll(){S.parsed={};C.entities.filter(e=>e.id!=='GROUP').forEach(e=>
 function rows(){return S.entity==='GROUP'?Object.values(S.parsed).flatMap(x=>x.rows):(S.parsed[S.entity]||{rows:[]}).rows}
 function aggregate(rs){
   const o={
-    total:0,over90:0,over180:0,over1yr:0,over2yr:0,current:0,
+    total:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0,current:0,
     customers:rs.length,divisions:{},buckets:{}
   };
   BK.forEach(k=>o.buckets[k]=0);
@@ -95,12 +95,14 @@ function aggregate(rs){
   rs.forEach(r=>{
     const f=S.entity==='GROUP'?r.fx:1,
       t=S.entity==='GROUP'?r.totalAED:r.total,
+      o60=(BK.slice(2).reduce((a,k)=>a+(r.buckets[k]||0),0))*f,
       o90=S.entity==='GROUP'?r.over90AED:r.over90,
       o180=S.entity==='GROUP'?r.over180AED:r.over180,
       o1=((r.buckets['366_730']||0)+(r.buckets.gt731||0))*f,
       o2=(r.buckets.gt731||0)*f;
 
     o.total+=t;
+    o.over60+=Math.min(t,Math.max(0,o60));
     o.over90+=o90;
     o.over180+=o180;
     o.over1yr+=Math.min(t,Math.max(0,o1));
@@ -108,8 +110,9 @@ function aggregate(rs){
     o.current+=t-o90;
 
     const key=r.division||'Unassigned';
-    if(!o.divisions[key])o.divisions[key]={total:0,over90:0,over180:0,over1yr:0,over2yr:0};
+    if(!o.divisions[key])o.divisions[key]={total:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0};
     o.divisions[key].total+=t;
+    o.divisions[key].over60+=Math.min(t,Math.max(0,o60));
     o.divisions[key].over90+=o90;
     o.divisions[key].over180+=o180;
     o.divisions[key].over1yr+=Math.min(t,Math.max(0,o1));
@@ -124,7 +127,69 @@ function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerH
 function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['customers','Top Customers'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
-function topTable(rs,field,title){const ccy=currency(),f=S.entity==='GROUP'?field+'AED':field,sorted=rs.filter(r=>r[f]>0).sort((a,b)=>b[f]-a[f]).slice(0,10),tot=sorted.reduce((a,r)=>a+r[f],0);return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${esc(title)}</h3></div></div><div class="recv-table-wrap"><table class="recv-table"><thead><tr><th>#</th><th>Customer</th><th>Division</th><th>Amount (${ccy})</th><th>%</th></tr></thead><tbody>${sorted.map((r,i)=>`<tr><td>${i+1}</td><td class="rowhead">${esc(r.customer)}</td><td>${esc(r.division)}</td><td class="num">${fmt(r[f])}</td><td class="num">${pct(tot?r[f]/tot*100:0)}</td></tr>`).join('')}</tbody></table></div></div>`}
+function topTable(rs,field,title){
+  const ccy=currency(),
+    f=S.entity==='GROUP'?field+'AED':field,
+    sorted=rs.filter(r=>r[f]>0).sort((a,b)=>b[f]-a[f]),
+    grand=sorted.reduce((a,r)=>a+r[f],0);
+
+  return`<div class="card panel recv-panel">
+    <div class="panelhead"><div>
+      <h3>${esc(title.replace(/^Top 10 /,'All '))}</h3>
+      <p class="hint">${sorted.length} customers · Amount descending</p>
+    </div></div>
+    <div class="recv-table-wrap"><table class="recv-table recv-customer-table">
+      <thead><tr>
+        <th>#</th><th>Customer</th><th>Entity</th><th>Division</th>
+        <th>Amount (${ccy})</th><th class="recv-pct-head">%</th>
+      </tr></thead>
+      <tbody>${sorted.map((r,i)=>`<tr>
+        <td>${i+1}</td>
+        <td class="recv-customer-name">${esc(r.customer)}</td>
+        <td>${esc(r.entityLabel||r.entityId||cfg(S.entity).label)}</td>
+        <td>${esc(r.division)}</td>
+        <td class="num">${fmt(r[f])}</td>
+        <td class="num recv-pct-cell">${pct(grand?r[f]/grand*100:0)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function divisionClass(name){
+  const n=clean(name).toUpperCase();
+  if(['CONSTRUCTION','MAST CLIMBERS','EVENTS'].includes(n))return'EPC';
+  if(['POWERED ACCESS','SITE SERVICES'].includes(n))return'S&R';
+  if(n==='FILM PRODUCTION')return'FP';
+  if(n==='GENERAL')return'GEN';
+  if(n==='OIL & GAS'||n==='OIL AND GAS')return'O&G';
+  return'OTHER';
+}
+
+function divisionClassSummary(rs){
+  const c=currency(),groups={EPC:0,'S&R':0,FP:0,GEN:0,'O&G':0,OTHER:0};
+  rs.forEach(r=>{
+    const amount=S.entity==='GROUP'?r.totalAED:r.total;
+    groups[divisionClass(r.division)]+=amount;
+  });
+  const total=Object.values(groups).reduce((a,v)=>a+v,0);
+  const order=['EPC','S&R','FP','GEN','O&G','OTHER'];
+  const rows=order.filter(k=>groups[k]!==0||k!=='OTHER').map(k=>`
+    <tr>
+      <td class="rowhead">${esc(k)}</td>
+      <td class="num">${fmt(groups[k])}</td>
+      <td class="num recv-pct-cell">${pct(total?groups[k]/total*100:0)}</td>
+    </tr>`).join('');
+  return`<div class="card panel recv-panel">
+    <div class="panelhead"><div>
+      <h3>Receivables by Business Classification</h3>
+      <p class="hint">EPC: Construction, Mast Climbers, Events · S&amp;R: Powered Access, Site Services</p>
+    </div></div>
+    <div class="recv-table-wrap"><table class="recv-table">
+      <thead><tr><th>DIV</th><th>Amount (${esc(c)})</th><th class="recv-pct-head">%</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
 
 function entityDivisionSummary(rs){
   const c=currency(),grouped={};
@@ -192,11 +257,11 @@ function entityDivisionSummary(rs){
       <td class="num">${fmt(x.total)}</td>
       <td class="num">${fmt(x.under90)}</td>
       <td class="num">${fmt(x.over90)}</td>
-      <td class="num">${pct(p90)}</td>
+      <td class="num recv-pct-cell">${pct(p90)}</td>
       <td class="num">${fmt(x.over1yr)}</td>
-      <td class="num">${pct(p1)}</td>
+      <td class="num recv-pct-cell">${pct(p1)}</td>
       <td class="num">${fmt(x.over2yr)}</td>
-      <td class="num">${pct(p2)}</td>
+      <td class="num recv-pct-cell">${pct(p2)}</td>
     </tr>`;
   }).join('');
 
@@ -208,32 +273,68 @@ function entityDivisionSummary(rs){
     <div class="recv-table-wrap"><table class="recv-table recv-summary-table">
       <thead><tr>
         <th>Entity</th><th>Division</th><th>DIV</th><th>Total</th>
-        <th>&lt;90 Days</th><th>&gt;90 Days</th><th>&gt;90 %</th>
-        <th>&gt;1 Year</th><th>&gt;1 Year %</th>
-        <th>&gt;2 Years</th><th>&gt;2 Years %</th>
+        <th>&lt;90 Days</th><th>&gt;90 Days</th><th class="recv-pct-head">&gt;90 %</th>
+        <th>&gt;1 Year</th><th class="recv-pct-head">&gt;1 Year %</th>
+        <th>&gt;2 Years</th><th class="recv-pct-head">&gt;2 Years %</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table></div>
   </div>`;
 }
-function overview(rs,a){const c=currency(),p90=a.total?a.over90/a.total*100:0,p180=a.total?a.over180/a.total*100:0,divs=Object.entries(a.divisions).map(([label,x])=>({label,value:x.total})).sort((x,y)=>y.value-x.value);return`<div class="grid kpis recv-kpis">${kpi('Total Receivables',c+' '+fmt(a.total),a.customers+' customer balances')}${kpi('Current / ≤90 Days',c+' '+fmt(a.current),pct(100-p90)+' of receivables','pos')}${kpi('Over 90 Days',c+' '+fmt(a.over90),pct(p90)+' of receivables',p90>35?'neg':'')}${kpi('Over 180 Days',c+' '+fmt(a.over180),pct(p180)+' of receivables',p180>15?'neg':'')}</div><div class="recv-two"><div class="card panel recv-panel"><div class="panelhead"><div><h3>Receivables by Division</h3></div></div>${bars(divs.slice(0,10),c)}</div>${topTable(rs,'total','Top 10 Customers')}</div>`}
+function overview(rs,a){
+  const c=currency(),p90=a.total?a.over90/a.total*100:0,p180=a.total?a.over180/a.total*100:0,
+    divs=Object.entries(a.divisions).map(([label,x])=>({
+      label,value:x.total,share:a.total?x.total/a.total*100:0
+    })).sort((x,y)=>y.value-x.value);
+
+  const divRows=divs.map(x=>`<tr>
+    <td class="rowhead">${esc(x.label)}</td>
+    <td class="num">${fmt(x.value)}</td>
+    <td class="num recv-pct-cell">${pct(x.share)}</td>
+  </tr>`).join('');
+
+  return`<div class="grid kpis recv-kpis">
+    ${kpi('Total Receivables',c+' '+fmt(a.total),a.customers+' customer balances')}
+    ${kpi('Current / ≤90 Days',c+' '+fmt(a.current),pct(100-p90)+' of receivables','pos')}
+    ${kpi('Over 90 Days',c+' '+fmt(a.over90),pct(p90)+' of receivables',p90>35?'neg':'')}
+    ${kpi('Over 180 Days',c+' '+fmt(a.over180),pct(p180)+' of receivables',p180>15?'neg':'')}
+  </div>
+  <div class="recv-two">
+    <div class="card panel recv-panel">
+      <div class="panelhead"><div><h3>Receivables by Division</h3></div></div>
+      <div class="recv-table-wrap"><table class="recv-table">
+        <thead><tr><th>Division</th><th>Amount (${esc(c)})</th><th class="recv-pct-head">%</th></tr></thead>
+        <tbody>${divRows}</tbody>
+      </table></div>
+    </div>
+    ${divisionClassSummary(rs)}
+  </div>
+  ${topTable(rs,'total','All Customers')}`;
+}
 function aging(a,rs){
   const c=currency(),
     labels={'0_30':'0–30','31_60':'31–60','61_90':'61–90','91_120':'91–120','121_150':'121–150','151_180':'151–180','181_210':'181–210','211_240':'211–240','241_270':'241–270','271_300':'271–300','301_330':'301–330','331_365':'331–365','366_730':'366–730','gt731':'>731'},
     items=Object.keys(labels).map(k=>({label:labels[k],value:a.buckets[k]})),
     dr=Object.entries(a.divisions).sort((x,y)=>y[1].total-x[1].total).map(([d,x])=>{
-      const under90=Math.max(0,x.total-x.over90);
+      const under90=Math.max(0,x.total-x.over90),
+        pUnder90=x.total?under90/x.total*100:0,
+        p60=x.total?x.over60/x.total*100:0,
+        p90=x.total?x.over90/x.total*100:0,
+        p1=x.total?x.over1yr/x.total*100:0,
+        p2=x.total?x.over2yr/x.total*100:0;
       return `<tr>
         <td class="rowhead">${esc(d)}</td>
         <td class="num">${fmt(x.total)}</td>
         <td class="num">${fmt(under90)}</td>
-        <td class="num">${pct(x.total?under90/x.total*100:0)}</td>
+        <td class="num recv-pct-cell">${pct(pUnder90)}</td>
+        <td class="num">${fmt(x.over60)}</td>
+        <td class="num recv-pct-cell">${pct(p60)}</td>
         <td class="num">${fmt(x.over90)}</td>
-        <td class="num">${pct(x.total?x.over90/x.total*100:0)}</td>
+        <td class="num recv-pct-cell">${pct(p90)}</td>
         <td class="num">${fmt(x.over1yr)}</td>
-        <td class="num">${pct(x.total?x.over1yr/x.total*100:0)}</td>
+        <td class="num recv-pct-cell">${pct(p1)}</td>
         <td class="num">${fmt(x.over2yr)}</td>
-        <td class="num">${pct(x.total?x.over2yr/x.total*100:0)}</td>
+        <td class="num recv-pct-cell">${pct(p2)}</td>
       </tr>`;
     }).join('');
 
@@ -242,13 +343,14 @@ function aging(a,rs){
   </div>
   <div class="card panel recv-panel">
     <div class="panelhead"><div><h3>Division Aging Summary</h3><p class="hint">Amounts and percentage of division total</p></div></div>
-    <div class="recv-table-wrap"><table class="recv-table">
+    <div class="recv-table-wrap"><table class="recv-table recv-aging-table">
       <thead><tr>
         <th>Division</th><th>Total</th>
-        <th>&lt;90 Days</th><th>&lt;90 %</th>
-        <th>&gt;90 Days</th><th>&gt;90 %</th>
-        <th>&gt;1 Year</th><th>&gt;1 Year %</th>
-        <th>&gt;2 Years</th><th>&gt;2 Years %</th>
+        <th>&lt;90 Days</th><th class="recv-pct-head">&lt;90 %</th>
+        <th>&gt;60 Days</th><th class="recv-pct-head">&gt;60 %</th>
+        <th>&gt;90 Days</th><th class="recv-pct-head">&gt;90 %</th>
+        <th>&gt;1 Year</th><th class="recv-pct-head">&gt;1 Year %</th>
+        <th>&gt;2 Years</th><th class="recv-pct-head">&gt;2 Years %</th>
       </tr></thead>
       <tbody>${dr}</tbody>
     </table></div>
@@ -256,10 +358,19 @@ function aging(a,rs){
   ${entityDivisionSummary(rs)}`;
 }
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`<div class="recv-two">${topTable(rs,'total','Top 10 Outstanding Customers')}${topTable(rs,'over180','Top Outstanding Customers Over 180 Days')}</div>`;else if(S.section==='movement')root.innerHTML=optional('movement');else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
+function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='movement')root.innerHTML=optional('movement');else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
 #view-receivables .recv-summary-table{min-width:1120px}
+
+#view-receivables .recv-customer-table{min-width:900px}
+#view-receivables .recv-customer-name{text-align:left!important;text-transform:capitalize;font-size:.84rem;font-weight:500;min-width:300px;white-space:normal}
+#view-receivables .recv-pct-head{background:#245f91!important}
+#view-receivables .recv-pct-cell{background:#eef8f3!important;color:#245f52;font-weight:700}
+#view-receivables .recv-table tbody tr:nth-child(even) .recv-pct-cell{background:#e3f3eb!important}
+#view-receivables .recv-summary-total .recv-pct-cell{background:#cfe4d8!important}
+#view-receivables .recv-aging-table{min-width:1260px}
+
 #view-receivables .recv-summary-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
 #view-receivables .recv-summary-total:last-child td{background:#d9d9d9!important;border-top:3px solid #6e6e6e}#view-receivables .recv-detected{padding:12px 16px;background:#eef6ff;border-radius:8px;margin:12px}@media(max-width:1100px){#view-receivables .recv-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-two{grid-template-columns:1fr}}@media(max-width:650px){#view-receivables .recv-kpis{grid-template-columns:1fr}}`;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
