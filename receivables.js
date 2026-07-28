@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v21.1
+// Receivables Intelligence Module v21.3
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -473,15 +473,26 @@ function parseLastPeriod(){
     const rows=[];
     if(h>=0)for(let i=h+1;i<source.length;i++){
       const r=source[i]||[];
-      const customer=clean(r[cfg.start+3]);
+      const rowNo=clean(r[cfg.start]);
+      const accountType=clean(r[cfg.start+1]);
+      const accountCode=clean(r[cfg.start+2]);
+      const accountName=clean(r[cfg.start+3]);
       const division=clean(r[cfg.start+4]);
-      if(!customer||/^(total|check)$/i.test(customer))continue;
       const total=num(r[cfg.start+5]);
       const b={};
       BK.forEach((k,j)=>b[k]=num(r[cfg.start+6+j]));
+
+      // Accept every genuine customer-detail row. Some ERP exports can have
+      // a blank account name while retaining row number/account code, so the
+      // parser must not drop the balance merely because Account Name is blank.
+      const isCustomerRow=/customer\s*ledge/i.test(accountType)||Boolean(accountCode)||/^\d+(?:\.0+)?$/.test(rowNo);
+      const isControl=/^(total|check)$/i.test(accountName)||/^(total|check)$/i.test(division);
+      if(!isCustomerRow||isControl)continue;
       if(total===0&&!BK.some(k=>b[k]!==0))continue;
+
+      const customer=accountName||accountCode||('Row '+rowNo);
       rows.push({
-        customer,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
+        customer,accountCode,rowNo,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
         over60:BK.slice(2).reduce((a,k)=>a+b[k],0),
         over90:BK.slice(3).reduce((a,k)=>a+b[k],0),
         over180:BK.slice(6).reduce((a,k)=>a+b[k],0),
@@ -572,10 +583,57 @@ function openingValidationTable(){
     if(S.entity!=='GROUP'&&S.entity!==c.id)return;
     const x=last[c.id]||{},factor=S.entity==='GROUP'?c.fx:1;
     const detail=(x.detailTotal||0)*factor,summary=(x.summaryTotal||0)*factor,diff=detail-summary;
-    rows.push({entity:c.label,detail,summary,diff,currency:S.entity==='GROUP'?'AED':cfg(c.id).currency});
+    rows.push({
+      country:c.country,
+      entity:c.label,
+      detail,
+      summary,
+      diff,
+      currency:S.entity==='GROUP'?'AED':cfg(c.id).currency
+    });
   });
-  const body=rows.map(r=>{const ok=Math.abs(r.diff)<=1;return`<tr><td>${esc(r.entity)}</td><td>${esc(r.currency)}</td><td class="num">${fmt(r.detail)}</td><td class="num">${fmt(r.summary)}</td><td class="num ${ok?'recv-good':'recv-bad'}">${fmt(r.diff)}</td><td><span class="recv-status ${ok?'ok':'warn'}">${ok?'Reconciled':'Review'}</span></td></tr>`}).join('');
-  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Opening Detail Validation</h3><p class="hint">Detail rows are the reporting source; the summary is the control total.</p></div></div><div class="recv-table-wrap recv-no-x"><table class="recv-table recv-recon-table"><thead><tr><th>Entity</th><th>Currency</th><th>Detail Total</th><th>Summary Control</th><th>Difference</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+
+  const countryTotals={};
+  rows.forEach(r=>{
+    if(!countryTotals[r.country])countryTotals[r.country]={country:r.country,entity:r.country+' Total',detail:0,summary:0,diff:0,currency:r.currency};
+    countryTotals[r.country].detail+=r.detail;
+    countryTotals[r.country].summary+=r.summary;
+    countryTotals[r.country].diff+=r.diff;
+  });
+
+  const display=[];
+  ['UAE','KSA','OMAN','UZBEKISTAN'].forEach(country=>{
+    const entityRows=rows.filter(r=>r.country===country);
+    display.push(...entityRows);
+    if(entityRows.length)display.push(countryTotals[country]);
+  });
+
+  const body=display.map(r=>{
+    const ok=Math.abs(r.diff)<=1;
+    const isTotal=/ Total$/.test(r.entity);
+    return`<tr class="${isTotal?'recv-country-total':''}">
+      <td>${esc(r.country)}</td>
+      <td>${esc(r.entity)}</td>
+      <td>${esc(r.currency)}</td>
+      <td class="num">${fmt(r.detail)}</td>
+      <td class="num">${fmt(r.summary)}</td>
+      <td class="num ${ok?'recv-good':'recv-bad'}">${fmt(r.diff)}</td>
+      <td><span class="recv-status ${ok?'ok':'warn'}">${ok?'Reconciled':'Review'}</span></td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="card panel recv-panel">
+    <div class="panelhead"><div>
+      <h3>Opening Detail Validation</h3>
+      <p class="hint">Detail rows are the reporting source; summary values are control totals. UAE includes ALPS and ALICLER.</p>
+    </div></div>
+    <div class="recv-table-wrap recv-no-x">
+      <table class="recv-table recv-recon-table">
+        <thead><tr><th>Country</th><th>Entity</th><th>Currency</th><th>Detail Total</th><th>Summary Control</th><th>Difference</th><th>Status</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 function movementValidation(lines){
   const details=matrix(MOVEMENT_CONFIG.movementSheet),last=matrix(MOVEMENT_CONFIG.lastPeriodSheet);
@@ -606,26 +664,81 @@ function movementKpis(lines){
   </div>`;
 }
 function compactMovementTable(lines){
-  const groups={};
-  lines.forEach(r=>{const k=r.country+'|'+r.division;if(!groups[k])groups[k]=[];groups[k].push(r)});
-  const rows=Object.entries(groups).map(([k,v])=>{const x=movementTotal(v,k.split('|')[0]);x.country=k.split('|')[0];x.division=k.split('|')[1];return x});
-  const group=movementTotal(lines,'Group');group.country='Group';group.division='Total';rows.push(group);
-  const hasCheque=rows.some(r=>Math.abs(r.cheque)>.5),hasAdvance=rows.some(r=>Math.abs(r.advance)>.5),hasReverse=rows.some(r=>Math.abs(r.creditReverse)>.5),hasIssue=rows.some(r=>Math.abs(r.creditIssue)>.5);
-  const head=['Country','DIV','Opening','Billing','Receipts'];
+  const detailGroups={};
+  lines.forEach(r=>{
+    const k=[r.country,r.entity,r.division].join('|');
+    if(!detailGroups[k])detailGroups[k]=[];
+    detailGroups[k].push(r);
+  });
+
+  const detailRows=Object.entries(detailGroups).map(([k,v])=>{
+    const parts=k.split('|'),x=movementTotal(v,parts[0]);
+    x.country=parts[0];x.entity=parts[1];x.division=parts[2];x.rowType='detail';
+    return x;
+  });
+
+  const display=[];
+  ['UAE','KSA','OMAN','UZBEKISTAN'].forEach(country=>{
+    const countryDetail=detailRows.filter(r=>r.country===country);
+    const entities=[...new Set(countryDetail.map(r=>r.entity))];
+    entities.forEach(entity=>{
+      const entityRows=countryDetail.filter(r=>r.entity===entity);
+      display.push(...entityRows);
+      const subtotal=movementTotal(entityRows,entity);
+      subtotal.country=country;subtotal.entity=entity;subtotal.division='Entity Total';subtotal.rowType='entity-total';
+      display.push(subtotal);
+    });
+    if(countryDetail.length){
+      const countryTotal=movementTotal(countryDetail,country);
+      countryTotal.country=country;countryTotal.entity='';countryTotal.division='Country Total';countryTotal.rowType='country-total';
+      display.push(countryTotal);
+    }
+  });
+
+  const group=movementTotal(lines,'Group');
+  group.country='Group';group.entity='';group.division='Group Total';group.rowType='group-total';
+  display.push(group);
+
+  const hasCheque=display.some(r=>Math.abs(r.cheque)>.5),
+    hasAdvance=display.some(r=>Math.abs(r.advance)>.5),
+    hasReverse=display.some(r=>Math.abs(r.creditReverse)>.5),
+    hasIssue=display.some(r=>Math.abs(r.creditIssue)>.5);
+
+  const head=['Country','Entity','DIV','Opening','Billing','Receipts'];
   if(hasCheque)head.push('Chq RTN');
   if(hasAdvance)head.push('Adv/Bank');
   if(hasReverse)head.push('CN Rev');
   if(hasIssue)head.push('CN Issued');
   head.push('Calc Closing','ERP Closing','Variance');
-  const body=rows.map(r=>{const total=r.country==='Group',ok=Math.abs(r.reconciliation)<=1;let cells=`<td>${esc(r.country)}</td><td>${esc(r.division)}</td><td class="num">${fmt(r.opening)}</td><td class="num">${fmt(r.billing)}</td><td class="num">${fmt(r.receipt)}</td>`;
+
+  const body=display.map(r=>{
+    const ok=Math.abs(r.reconciliation)<=1;
+    let cells=`<td>${esc(r.country)}</td><td>${esc(r.entity)}</td><td>${esc(r.division)}</td>
+      <td class="num">${fmt(r.opening)}</td><td class="num">${fmt(r.billing)}</td><td class="num">${fmt(r.receipt)}</td>`;
     if(hasCheque)cells+=`<td class="num">${fmt(r.cheque)}</td>`;
     if(hasAdvance)cells+=`<td class="num">${fmt(r.advance)}</td>`;
     if(hasReverse)cells+=`<td class="num">${fmt(r.creditReverse)}</td>`;
     if(hasIssue)cells+=`<td class="num">${fmt(r.creditIssue)}</td>`;
-    cells+=`<td class="num">${fmt(r.calculatedClosing)}</td><td class="num">${fmt(r.closing)}</td><td class="num ${ok?'recv-good':'recv-bad'}">${fmt(r.reconciliation)}</td>`;
-    return `<tr class="${total?'recv-movement-total':''}">${cells}</tr>`}).join('');
-  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Movement Summary</h3><p class="hint">Opening + Billing − Receipts + Cheque Return − Advance/Bank + CN Reversal − CN Issued</p></div></div>
-    <div class="recv-table-wrap recv-no-x"><table class="recv-table recv-v21-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div></div>`;
+    cells+=`<td class="num">${fmt(r.calculatedClosing)}</td><td class="num">${fmt(r.closing)}</td>
+      <td class="num ${ok?'recv-good':'recv-bad'}">${fmt(r.reconciliation)}</td>`;
+    const cls=r.rowType==='group-total'?'recv-movement-total recv-group-total':
+      r.rowType==='country-total'?'recv-country-total':
+      r.rowType==='entity-total'?'recv-entity-total':'';
+    return `<tr class="${cls}">${cells}</tr>`;
+  }).join('');
+
+  return `<div class="card panel recv-panel">
+    <div class="panelhead"><div>
+      <h3>Movement Summary</h3>
+      <p class="hint">UAE = ALPS + ALICLER. Opening + Billing − Receipts + Cheque Return − Advance/Bank + CN Reversal − CN Issued.</p>
+    </div></div>
+    <div class="recv-table-wrap recv-no-x">
+      <table class="recv-table recv-v21-table">
+        <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 function compactAgingTable(lines){
   const groups={};lines.forEach(r=>{if(!groups[r.division])groups[r.division]=[];groups[r.division].push(r)});
@@ -814,3 +927,8 @@ function boot(){
 window.RECEIVABLES_INTELLIGENCE={refresh,render,state:S,config:C,applyPayload};
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
 })();
+#view-receivables .recv-entity-total td{font-weight:700;background:#f3f7fb!important;border-top:1px solid #c7d6e8}
+#view-receivables .recv-country-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
+#view-receivables .recv-group-total td{font-weight:900;background:#d1d1d1!important;border-top:3px solid #666}
+#view-receivables .recv-v21-table th,#view-receivables .recv-v21-table td{font-size:.72rem;padding:7px 5px;white-space:normal}
+
