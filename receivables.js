@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v18
+// Receivables Intelligence Module v19
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -573,8 +573,76 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
 function jsonp(url){return new Promise((res,rej)=>{const cb='recvJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2),sc=document.createElement('script'),sep=url.includes('?')?'&':'?',tm=setTimeout(()=>{done();rej(new Error('Receivables request timed out.'))},120000);function done(){clearTimeout(tm);try{delete window[cb]}catch(_){window[cb]=undefined}if(sc.parentNode)sc.parentNode.removeChild(sc)}window[cb]=d=>{done();res(d)};sc.onerror=()=>{done();rej(new Error('Could not load Google Sheet endpoint.'))};sc.src=url+sep+'callback='+encodeURIComponent(cb)+'&t='+Date.now();document.body.appendChild(sc)})}
-async function refresh(o){o=o||{};ui();const root=$('recvContent');if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing receivables…</div>';const url=api();if(!url){root.innerHTML='<div class="empty">Google Apps Script URL is not configured.</div>';return}try{S.payload=await jsonp(url);S.updated=S.payload&&S.payload.lastUpdated?new Date(S.payload.lastUpdated).toLocaleString():new Date().toLocaleString();parseAll();render()}catch(e){root.innerHTML='<div class="empty">Could not load receivables: '+esc(e.message)+'</div>'}}
-function wrap(){if(S.wrapped||typeof window.refreshFromGoogleSheet!=='function')return false;const old=window.refreshFromGoogleSheet;window.refreshFromGoogleSheet=async function(){const r=await old.apply(this,arguments);await refresh({silent:true});return r};S.wrapped=true;return true}
-function boot(){ui();const t=setInterval(()=>{ui();if(wrap())clearInterval(t)},250);setTimeout(()=>clearInterval(t),15000);setTimeout(()=>refresh({silent:true}),500)}
-window.RECEIVABLES_INTELLIGENCE={refresh,render,state:S,config:C};document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
+function applyPayload(payload){
+  if(!payload||typeof payload!=='object')return false;
+  S.payload=payload;
+  S.updated=payload.lastUpdated?new Date(payload.lastUpdated).toLocaleString():new Date().toLocaleString();
+  parseAll();
+  render();
+  return true;
+}
+async function refresh(o){
+  o=o||{};
+  ui();
+  const root=$('recvContent');
+
+  // Reuse the payload already loaded successfully by app.js.
+  // This avoids a second very large JSONP request for all DR sheets.
+  if(applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD))return;
+
+  if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing receivables…</div>';
+  const url=api();
+  if(!url){
+    root.innerHTML='<div class="empty">Google Apps Script URL is not configured.</div>';
+    return;
+  }
+
+  try{
+    const payload=await jsonp(url);
+    window.GOOGLE_SHEET_RAW_PAYLOAD=payload;
+    applyPayload(payload);
+  }catch(e){
+    root.innerHTML='<div class="empty">Could not load receivables: '+esc(e.message)+'. Click the main Refresh Google Sheet button first.</div>';
+  }
+}
+function wrap(){
+  if(S.wrapped||typeof window.refreshFromGoogleSheet!=='function')return false;
+  const old=window.refreshFromGoogleSheet;
+  window.refreshFromGoogleSheet=async function(){
+    const r=await old.apply(this,arguments);
+    if(window.GOOGLE_SHEET_RAW_PAYLOAD)applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+    return r;
+  };
+  S.wrapped=true;
+  return true;
+}
+function boot(){
+  ui();
+
+  // Receive the exact payload loaded by app.js.
+  window.addEventListener('googleSheetPayloadReady',function(e){
+    applyPayload(e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD);
+  });
+
+  const t=setInterval(()=>{
+    ui();
+    wrap();
+    if(window.GOOGLE_SHEET_RAW_PAYLOAD){
+      applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+      clearInterval(t);
+    }
+  },250);
+
+  setTimeout(()=>clearInterval(t),15000);
+
+  // Do not start a competing full API request during page load.
+  setTimeout(()=>{
+    if(!window.GOOGLE_SHEET_RAW_PAYLOAD){
+      const root=$('recvContent');
+      if(root)root.innerHTML='<div class="empty">Click <strong>Refresh Google Sheet</strong> to load Receivables Intelligence.</div>';
+    }
+  },1200);
+}
+window.RECEIVABLES_INTELLIGENCE={refresh,render,state:S,config:C,applyPayload};
+document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
 })();
