@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v19
+// Receivables Intelligence Module v20
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -388,55 +388,42 @@ function movementClass(name){
   return'OTHER';
 }
 function sliceBlock(m,start,end){return(m||[]).map(r=>(r||[]).slice(start,end+1))}
-function detectBlockHeader(block,required){
+function fixedMovementRows(cfg){
+  const source=matrix(MOVEMENT_CONFIG.movementSheet),rows=[];
+  // Row 5 contains headings. Data starts on row 6.
+  for(let i=5;i<source.length;i++){
+    const r=source[i]||[];
+    const code=clean(r[cfg.start]),name=clean(r[cfg.start+1]),division=clean(r[cfg.start+2]);
+    if(!code&&!name&&!division)continue;
+    if(/^(total|check)$/i.test(name))continue;
+    const row={
+      code,name,division:division||'Unassigned',classCode:movementClass(division),
+      billing:num(r[cfg.start+3]),
+      receipt:num(r[cfg.start+4]),
+      cheque:num(r[cfg.start+5]),
+      advance:num(r[cfg.start+6]),
+      creditReverse:num(r[cfg.start+7]),
+      creditIssue:num(r[cfg.start+8])
+    };
+    if(row.billing||row.receipt||row.cheque||row.advance||row.creditReverse||row.creditIssue)rows.push(row);
+  }
+  return rows;
+}
+function parseMovementDetails(){
+  const out={};
+  MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>out[cfg.id]={cfg,rows:fixedMovementRows(cfg)});
+  return out;
+}
+function detectBlockHeader(block){
   let best=-1,score=-1;
   block.forEach((r,i)=>{
     const h=(r||[]).map(norm);let s=0;
-    required.forEach(x=>{if(h.some(v=>v.includes(x)))s++});
+    if(h.some(v=>v.includes('accountname')||v.includes('customername')))s+=4;
+    if(h.some(v=>v.includes('outstandingamount')||v.includes('totalreceivable')))s+=4;
+    if(h.some(v=>v==='dimension'||v==='division'))s+=3;
     if(s>score){score=s;best=i}
   });
-  return score>=Math.max(2,required.length-1)?best:-1;
-}
-function movementMap(headers){
-  const m={};
-  headers.forEach((h,i)=>{
-    const n=norm(h);
-    if(m.code==null&&(n.includes('acccode')||n.includes('accountcode')))m.code=i;
-    if(m.name==null&&(n.includes('accname')||n.includes('accountname')))m.name=i;
-    if(m.div==null&&(n.includes('divcode')||n==='division'||n==='dimension'))m.div=i;
-    if(m.billing==null&&n.includes('dramt')&&!n.includes('jnrl')&&!n.includes('crnt'))m.billing=i;
-    if(m.receipt==null&&n.includes('cramt')&&!n.includes('jnrl')&&!n.includes('crnt'))m.receipt=i;
-    if(m.cheque==null&&n.includes('dramt')&&n.includes('jnrl'))m.cheque=i;
-    if(m.advance==null&&n.includes('cramt')&&n.includes('jnrl'))m.advance=i;
-    if(m.creditReverse==null&&n.includes('dramt')&&n.includes('crnt'))m.creditReverse=i;
-    if(m.creditIssue==null&&n.includes('cramt')&&n.includes('crnt'))m.creditIssue=i;
-  });
-  return m;
-}
-function parseMovementDetails(){
-  const source=matrix(MOVEMENT_CONFIG.movementSheet),out={};
-  MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>{
-    const block=sliceBlock(source,cfg.start,cfg.end),
-      h=detectBlockHeader(block,['acccode','accname','divcode','dramt','cramt']),
-      map=h>=0?movementMap((block[h]||[]).map(clean)):{},
-      rows=[];
-    if(h>=0)for(let i=h+1;i<block.length;i++){
-      const r=block[i]||[],name=clean(r[map.name]),division=clean(r[map.div]);
-      if(!name&&!division)continue;
-      const row={
-        name,division:division||'Unassigned',classCode:movementClass(division),
-        billing:Math.max(0,num(r[map.billing])),
-        receipt:Math.max(0,num(r[map.receipt])),
-        cheque:Math.max(0,num(r[map.cheque])),
-        advance:Math.max(0,num(r[map.advance])),
-        creditReverse:Math.max(0,num(r[map.creditReverse])),
-        creditIssue:Math.max(0,num(r[map.creditIssue]))
-      };
-      if(row.billing||row.receipt||row.cheque||row.advance||row.creditReverse||row.creditIssue)rows.push(row);
-    }
-    out[cfg.id]={rows};
-  });
-  return out;
+  return score>=7?best:-1;
 }
 function lastPeriodMap(headers){
   const m={};
@@ -456,87 +443,143 @@ function lastPeriodMap(headers){
 function parseLastPeriod(){
   const source=matrix(MOVEMENT_CONFIG.lastPeriodSheet),out={};
   MOVEMENT_CONFIG.lastBlocks.forEach(cfg=>{
-    const block=sliceBlock(source,cfg.start,cfg.end),
-      h=detectBlockHeader(block,['accountname','dimension','outstandingamount']),
-      map=h>=0?lastPeriodMap((block[h]||[]).map(clean)):{},
-      rows=[];
+    const block=sliceBlock(source,cfg.start,cfg.end),h=detectBlockHeader(block),rows=[];
+    const map=h>=0?lastPeriodMap((block[h]||[]).map(clean)):{};
     if(h>=0)for(let i=h+1;i<block.length;i++){
       const r=block[i]||[],customer=clean(r[map.customer]),division=clean(r[map.division]);
-      if(!customer||/^total$|^check$/i.test(customer))continue;
-      const buckets={};BK.forEach(k=>buckets[k]=map[k]==null?0:Math.max(0,num(r[map[k]])));
-      const total=Math.max(0,num(r[map.total]))||BK.reduce((a,k)=>a+buckets[k],0);
-      if(!total&&!BK.some(k=>buckets[k]))continue;
-      rows.push({division:division||'Unassigned',classCode:movementClass(division),total,
-        over90:Math.min(total,BK.slice(3).reduce((a,k)=>a+buckets[k],0))});
+      if(!customer||/^(total|check)$/i.test(customer))continue;
+      const b={};BK.forEach(k=>b[k]=map[k]==null?0:Math.max(0,num(r[map[k]])));
+      const total=Math.max(0,num(r[map.total]))||BK.reduce((a,k)=>a+b[k],0);
+      if(!total&&!BK.some(k=>b[k]))continue;
+      rows.push({
+        customer,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
+        over60:Math.min(total,BK.slice(2).reduce((a,k)=>a+b[k],0)),
+        over90:Math.min(total,BK.slice(3).reduce((a,k)=>a+b[k],0)),
+        over180:Math.min(total,BK.slice(6).reduce((a,k)=>a+b[k],0)),
+        over1yr:Math.min(total,(b['366_730']||0)+(b.gt731||0)),
+        over2yr:Math.min(total,b.gt731||0)
+      });
     }
-    out[cfg.id]={rows};
+    out[cfg.id]={rows,headerFound:h>=0};
   });
   return out;
+}
+function currentAgingMetrics(rows,factor){
+  const x={total:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0};
+  rows.forEach(r=>{
+    x.total+=r.total*factor;
+    x.over60+=BK.slice(2).reduce((a,k)=>a+(r.buckets[k]||0),0)*factor;
+    x.over90+=r.over90*factor;
+    x.over180+=r.over180*factor;
+    x.over1yr+=((r.buckets['366_730']||0)+(r.buckets.gt731||0))*factor;
+    x.over2yr+=(r.buckets.gt731||0)*factor;
+  });
+  return x;
+}
+function priorAgingMetrics(rows,factor){
+  const x={total:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0};
+  rows.forEach(r=>Object.keys(x).forEach(k=>x[k]+=(r[k]||0)*factor));
+  return x;
 }
 function movementLines(){
   const details=parseMovementDetails(),last=parseLastPeriod(),lines=[];
   MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>{
-    const f=cfg.fx,current=(S.parsed[cfg.id]||{rows:[]}).rows,
-      movement=(details[cfg.id]||{rows:[]}).rows,previous=(last[cfg.id]||{rows:[]}).rows;
+    if(S.entity!=='GROUP'&&S.entity!==cfg.id)return;
+    const factor=S.entity==='GROUP'?cfg.fx:1;
+    const current=(S.parsed[cfg.id]||{rows:[]}).rows;
+    const movement=(details[cfg.id]||{rows:[]}).rows;
+    const previous=(last[cfg.id]||{rows:[]}).rows;
     ['EPC','S&R','FP','GEN','O&G'].forEach(div=>{
-      const cur=current.filter(r=>movementClass(r.division)===div),
-        mov=movement.filter(r=>r.classCode===div),prv=previous.filter(r=>r.classCode===div);
-      const x={
-        country:cfg.country,entity:cfg.label,division:div,
-        opening:prv.reduce((a,r)=>a+r.total*f,0),
-        billing:mov.reduce((a,r)=>a+r.billing*f,0),
-        receipt:mov.reduce((a,r)=>a+r.receipt*f,0),
-        cheque:mov.reduce((a,r)=>a+r.cheque*f,0),
-        creditNotes:mov.reduce((a,r)=>a+(r.advance+r.creditIssue-r.creditReverse)*f,0),
-        closing:cur.reduce((a,r)=>a+r.total*f,0),
-        opening90:prv.reduce((a,r)=>a+r.over90*f,0),
-        closing90:cur.reduce((a,r)=>a+r.over90*f,0)
-      };
-      x.movement=x.closing90-x.opening90;
-      x.movementPct=x.opening90?x.movement/x.opening90*100:0;
-      if(Object.keys(x).some(k=>typeof x[k]==='number'&&x[k]!==0))lines.push(x);
+      const cur=current.filter(r=>movementClass(r.division)===div),mov=movement.filter(r=>r.classCode===div),prv=previous.filter(r=>r.classCode===div);
+      const ca=currentAgingMetrics(cur,factor),pa=priorAgingMetrics(prv,factor);
+      const billing=mov.reduce((a,r)=>a+r.billing*factor,0),receipt=mov.reduce((a,r)=>a+r.receipt*factor,0),
+        cheque=mov.reduce((a,r)=>a+r.cheque*factor,0),advance=mov.reduce((a,r)=>a+r.advance*factor,0),
+        creditReverse=mov.reduce((a,r)=>a+r.creditReverse*factor,0),creditIssue=mov.reduce((a,r)=>a+r.creditIssue*factor,0);
+      const calculatedClosing=pa.total+billing+cheque+creditReverse-receipt-advance-creditIssue;
+      const reconciliation=ca.total-calculatedClosing;
+      const agedMovement=ca.over90-pa.over90;
+      const agedPct=pa.over90?agedMovement/pa.over90*100:(ca.over90?'NEW':0);
+      if(!(pa.total||ca.total||billing||receipt||cheque||advance||creditReverse||creditIssue||pa.over90||ca.over90))return;
+      lines.push({country:cfg.country,entity:cfg.label,entityId:cfg.id,division:div,currency:S.entity==='GROUP'?'AED':cfg(cfg.id).currency,
+        opening:pa.total,billing,receipt,cheque,advance,creditReverse,creditIssue,calculatedClosing,closing:ca.total,reconciliation,
+        opening60:pa.over60,closing60:ca.over60,opening90:pa.over90,closing90:ca.over90,
+        opening180:pa.over180,closing180:ca.over180,opening1yr:pa.over1yr,closing1yr:ca.over1yr,
+        opening2yr:pa.over2yr,closing2yr:ca.over2yr,movement:agedMovement,movementPct:agedPct});
     });
   });
   return lines;
 }
 function movementTotal(rows,label){
   const x={country:label,entity:'',division:'Total'};
-  ['opening','billing','receipt','cheque','creditNotes','closing','opening90','closing90','movement']
+  ['opening','billing','receipt','cheque','advance','creditReverse','creditIssue','calculatedClosing','closing','reconciliation',
+   'opening60','closing60','opening90','closing90','opening180','closing180','opening1yr','closing1yr','opening2yr','closing2yr','movement']
     .forEach(k=>x[k]=rows.reduce((a,r)=>a+(r[k]||0),0));
-  x.movementPct=x.opening90?x.movement/x.opening90*100:0;
+  x.movementPct=x.opening90?x.movement/x.opening90*100:(x.closing90?'NEW':0);
   return x;
 }
-function movementChart(lines){
-  const g={};lines.forEach(r=>{if(!g[r.division])g[r.division]={opening:0,closing:0};g[r.division].opening+=r.opening90;g[r.division].closing+=r.closing90});
-  const max=Math.max(1,...Object.values(g).flatMap(x=>[x.opening,x.closing]));
-  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Receivables Aged Over 90 Days by Division</h3></div></div>
-    <div class="recv-movement-chart">${Object.entries(g).map(([d,x])=>`<div class="recv-move-group"><div class="recv-move-label">${esc(d)}</div><div>
-      <div class="recv-move-line"><span>Opening</span><i class="open" style="width:${Math.max(1,x.opening/max*100)}%"></i><b>${fmt(x.opening)}</b></div>
-      <div class="recv-move-line"><span>Closing</span><i class="close" style="width:${Math.max(1,x.closing/max*100)}%"></i><b>${fmt(x.closing)}</b></div>
-    </div></div>`).join('')}</div></div>`;
+function movementStatus(v){return Math.abs(v)<=1?'Pass':'Warning'}
+function movementPctText(v){return v==='NEW'?'New':pct(v)}
+function movementValidation(lines){
+  const details=matrix(MOVEMENT_CONFIG.movementSheet),last=matrix(MOVEMENT_CONFIG.lastPeriodSheet);
+  const currentNames=MOVEMENT_CONFIG.currentBlocks.map(c=>first((C.entities.find(e=>e.id===c.id)||{sheets:[]}).sheets));
+  const checks=[
+    ['DR-Movement Details loaded',details.length>0],['DR-Last Period loaded',last.length>0],
+    ['All current DR entity sheets loaded',currentNames.every(Boolean)],
+    ['Fixed movement blocks detected',MOVEMENT_CONFIG.currentBlocks.every(c=>fixedMovementRows(c).length>0)],
+    ['Opening totals available',lines.some(x=>x.opening!==0)],['Closing totals available',lines.some(x=>x.closing!==0)],
+    ['Currency rates applied',S.entity!=='GROUP'||(MOVEMENT_CONFIG.currentBlocks.find(x=>x.id==='ALU').fx===.975&&MOVEMENT_CONFIG.currentBlocks.find(x=>x.id==='ALIS').fx===9.5)],
+    ['Reconciliation completed',lines.length>0]
+  ];
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Data Validation</h3></div></div><div class="recv-validation-grid">${checks.map(([l,ok])=>`<div class="recv-validation ${ok?'ok':'warn'}"><span>${ok?'✓':'!'}</span><b>${esc(l)}</b></div>`).join('')}</div></div>`;
+}
+function movementKpis(lines){
+  const t=movementTotal(lines,'Group'),cc=S.entity==='GROUP'?'AED':cfg(S.entity).currency;
+  return `<div class="grid kpis recv-movement-kpis">
+    ${kpi('Opening Receivables',cc+' '+fmt(t.opening),'Previous period')}
+    ${kpi('Billing',cc+' '+fmt(t.billing),'Current period invoicing')}
+    ${kpi('Collections',cc+' '+fmt(t.receipt),'Current period receipts')}
+    ${kpi('Closing Receivables',cc+' '+fmt(t.closing),'Current ERP closing')}
+    ${kpi('Closing >90 Days',cc+' '+fmt(t.closing90),t.closing?pct(t.closing90/t.closing*100)+' of closing':'0%')}
+    ${kpi('>90 Movement',movementPctText(t.movementPct),cc+' '+fmt(t.movement),typeof t.movementPct==='number'&&t.movementPct>0?'neg':'pos')}
+  </div>`;
+}
+function compactMovementTable(lines){
+  const groups={};lines.forEach(r=>{const k=r.country+'|'+r.division;if(!groups[k])groups[k]=[];groups[k].push(r)});
+  const rows=Object.entries(groups).map(([k,v])=>{const x=movementTotal(v,k.split('|')[0]);x.country=k.split('|')[0];x.division=k.split('|')[1];return x});
+  const group=movementTotal(lines,'Group');group.country='Group';group.division='Total';rows.push(group);
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Movement Summary</h3><p class="hint">Compact management view · no horizontal scrolling</p></div></div>
+    <div class="recv-table-wrap recv-no-x"><table class="recv-table recv-compact-table"><thead><tr><th>Country</th><th>DIV</th><th>Opening</th><th>Billing</th><th>Receipts</th><th>Closing</th><th>&gt;90 Movement</th><th>%</th></tr></thead>
+    <tbody>${rows.map(r=>{const total=r.country==='Group',mc=r.movement>0?'recv-bad':r.movement<0?'recv-good':'';return`<tr class="${total?'recv-movement-total':''}"><td>${esc(r.country)}</td><td>${esc(r.division)}</td><td class="num">${fmt(r.opening)}</td><td class="num">${fmt(r.billing)}</td><td class="num">${fmt(r.receipt)}</td><td class="num">${fmt(r.closing)}</td><td class="num ${mc}">${fmt(r.movement)}</td><td class="num recv-pct-cell ${mc}">${movementPctText(r.movementPct)}</td></tr>`}).join('')}</tbody></table></div></div>`;
+}
+function compactAgingTable(lines){
+  const groups={};lines.forEach(r=>{if(!groups[r.division])groups[r.division]=[];groups[r.division].push(r)});
+  const rows=Object.entries(groups).map(([d,v])=>{const x=movementTotal(v,d);x.division=d;return x});
+  const total=movementTotal(lines,'Group');total.division='Total';rows.push(total);
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Closing Aging Summary</h3></div></div><div class="recv-table-wrap recv-no-x"><table class="recv-table recv-aging-compact"><thead><tr><th>DIV</th><th>&gt;60</th><th>&gt;90</th><th>&gt;180</th><th>&gt;1 Year</th><th>&gt;2 Years</th></tr></thead><tbody>${rows.map(r=>`<tr class="${r.division==='Total'?'recv-movement-total':''}"><td>${esc(r.division)}</td><td class="num">${fmt(r.closing60)}</td><td class="num">${fmt(r.closing90)}</td><td class="num">${fmt(r.closing180)}</td><td class="num">${fmt(r.closing1yr)}</td><td class="num">${fmt(r.closing2yr)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function reconciliationTable(lines){
+  const entities={};lines.forEach(r=>{if(!entities[r.entity])entities[r.entity]=[];entities[r.entity].push(r)});
+  const rows=Object.entries(entities).map(([e,v])=>{const x=movementTotal(v,e);x.entity=e;return x});
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Reconciliation Control</h3><p class="hint">Actual ERP closing less calculated closing</p></div></div><div class="recv-table-wrap recv-no-x"><table class="recv-table recv-recon-table"><thead><tr><th>Entity</th><th>Calculated Closing</th><th>ERP Closing</th><th>Difference</th><th>Status</th></tr></thead><tbody>${rows.map(r=>{const ok=Math.abs(r.reconciliation)<=1;return`<tr><td>${esc(r.entity)}</td><td class="num">${fmt(r.calculatedClosing)}</td><td class="num">${fmt(r.closing)}</td><td class="num ${ok?'recv-good':'recv-bad'}">${fmt(r.reconciliation)}</td><td><span class="recv-status ${ok?'ok':'warn'}">${movementStatus(r.reconciliation)}</span></td></tr>`}).join('')}</tbody></table></div></div>`;
+}
+function adjustmentsTable(lines){
+  const t=movementTotal(lines,'Group'),cc=S.entity==='GROUP'?'AED':cfg(S.entity).currency;
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Movement Adjustments</h3><p class="hint">Used in calculated-closing reconciliation · ${esc(cc)}</p></div></div><div class="recv-adjust-grid">
+    <div><span>Cheque RTN / Refund</span><b>${fmt(t.cheque)}</b></div><div><span>Advance Settlement / Bank Charges</span><b>${fmt(t.advance)}</b></div>
+    <div><span>Credit Note Reversal / FX Loss</span><b>${fmt(t.creditReverse)}</b></div><div><span>Credit Note Issuance</span><b>${fmt(t.creditIssue)}</b></div>
+  </div></div>`;
 }
 function movementBrief(lines){
-  const t=movementTotal(lines,'Group'),change=t.closing-t.opening,aged=t.closing90-t.opening90;
-  return`<div class="card panel recv-panel recv-brief"><div class="panelhead"><div><h3>Executive Summary Brief</h3></div></div>
-    <p>Group receivables moved from <strong>AED ${fmt(t.opening)}</strong> to <strong>AED ${fmt(t.closing)}</strong>, a ${change<=0?'reduction':'increase'} of <strong>AED ${fmt(Math.abs(change))}</strong>.</p>
-    <p>Receivables aged over 90 days moved from <strong>AED ${fmt(t.opening90)}</strong> to <strong>AED ${fmt(t.closing90)}</strong>, a ${aged<=0?'improvement':'deterioration'} of <strong>AED ${fmt(Math.abs(aged))}</strong>.</p>
-  </div>`;
+  const t=movementTotal(lines,'Group'),cc=S.entity==='GROUP'?'AED':cfg(S.entity).currency,change=t.closing-t.opening,aged=t.closing90-t.opening90;
+  return `<div class="card panel recv-panel recv-brief"><div class="panelhead"><div><h3>Executive Summary Brief</h3></div></div>
+    <p>Receivables moved from <strong>${cc} ${fmt(t.opening)}</strong> to <strong>${cc} ${fmt(t.closing)}</strong>, a ${change<=0?'reduction':'increase'} of <strong>${cc} ${fmt(Math.abs(change))}</strong>.</p>
+    <p>Receivables aged over 90 days moved from <strong>${cc} ${fmt(t.opening90)}</strong> to <strong>${cc} ${fmt(t.closing90)}</strong>, a ${aged<=0?'improvement':'deterioration'} of <strong>${cc} ${fmt(Math.abs(aged))}</strong>.</p>
+    <p>The reconciliation difference between calculated and ERP closing is <strong>${cc} ${fmt(t.reconciliation)}</strong>.</p></div>`;
 }
 function renderMovementAnalysis(){
   const lines=movementLines();
-  if(!lines.length)return`<div class="card panel recv-panel"><div class="empty">Movement data was not detected. Confirm Apps Script exports <strong>DR-Movement Details</strong> and <strong>DR-Last Period</strong>.</div></div>`;
-  const groups={};lines.forEach(r=>{if(!groups[r.country])groups[r.country]=[];groups[r.country].push(r)});
-  const rows=[];Object.keys(groups).forEach(c=>{rows.push(...groups[c]);rows.push(movementTotal(groups[c],c))});rows.push(movementTotal(lines,'Group'));
-  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Receivable Movement Analysis by Country &amp; Division</h3><p class="hint">AED · Current movement versus archived prior period</p></div></div>
-    <div class="recv-table-wrap"><table class="recv-table recv-movement-table"><thead><tr>
-      <th>Country</th><th>Entity</th><th>Division</th><th>Opening</th><th>Billing</th><th>Receipt</th><th>Chq RTN/Refund</th>
-      <th>Credit Notes / Adjustments</th><th>Closing</th><th>Opening &gt;90</th><th>Closing &gt;90</th><th>Movement</th><th>%</th>
-    </tr></thead><tbody>${rows.map(r=>{const total=r.division==='Total',mc=r.movement>0?'recv-bad':r.movement<0?'recv-good':'';return`<tr class="${total?'recv-movement-total':''}">
-      <td>${esc(r.country)}</td><td>${esc(r.entity)}</td><td>${esc(r.division)}</td><td class="num">${fmt(r.opening)}</td><td class="num">${fmt(r.billing)}</td>
-      <td class="num">${fmt(r.receipt)}</td><td class="num">${fmt(r.cheque)}</td><td class="num">${fmt(r.creditNotes)}</td><td class="num">${fmt(r.closing)}</td>
-      <td class="num">${fmt(r.opening90)}</td><td class="num">${fmt(r.closing90)}</td><td class="num ${mc}">${fmt(r.movement)}</td>
-      <td class="num recv-pct-cell ${mc}">${pct(r.movementPct)}</td></tr>`}).join('')}</tbody></table></div></div>
-    ${movementChart(lines)}${movementBrief(lines)}`;
+  if(!lines.length)return`<div class="card panel recv-panel"><div class="empty">Movement data was not detected. Confirm Apps Script exports <strong>DR-Movement Details</strong>, <strong>DR-Last Period</strong>, and all current DR entity sheets.</div></div>`;
+  return `${movementValidation(lines)}${movementKpis(lines)}${compactMovementTable(lines)}<div class="recv-movement-grid">${compactAgingTable(lines)}${reconciliationTable(lines)}</div><div class="recv-movement-grid">${adjustmentsTable(lines)}${movementBrief(lines)}</div>`;
 }
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
 function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
@@ -566,10 +609,25 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .recv-move-line i.close{background:#58c993}
 #view-receivables .recv-move-line b{text-align:right}
 #view-receivables .recv-brief p{line-height:1.6;margin:10px 0}
+#view-receivables .recv-movement-kpis{grid-template-columns:repeat(6,minmax(130px,1fr));margin-top:14px}
+#view-receivables .recv-no-x{overflow-x:hidden}
+#view-receivables .recv-compact-table,#view-receivables .recv-aging-compact,#view-receivables .recv-recon-table{table-layout:fixed;width:100%;font-size:.82rem}
+#view-receivables .recv-compact-table th,#view-receivables .recv-compact-table td,#view-receivables .recv-aging-compact th,#view-receivables .recv-aging-compact td,#view-receivables .recv-recon-table th,#view-receivables .recv-recon-table td{padding:7px 6px;white-space:normal;overflow-wrap:anywhere}
+#view-receivables .recv-compact-table th:nth-child(1){width:12%}#view-receivables .recv-compact-table th:nth-child(2){width:8%}
+#view-receivables .recv-movement-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+#view-receivables .recv-validation-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:4px}
+#view-receivables .recv-validation{display:flex;gap:8px;align-items:center;padding:9px 10px;border-radius:8px;background:#f4f6f8;font-size:.82rem}
+#view-receivables .recv-validation.ok span{color:#14824b}#view-receivables .recv-validation.warn span{color:#c0392b}
+#view-receivables .recv-status{display:inline-block;padding:3px 8px;border-radius:999px;font-weight:800;font-size:.75rem}
+#view-receivables .recv-status.ok{background:#e5f5ec;color:#14824b}#view-receivables .recv-status.warn{background:#fdecea;color:#c0392b}
+#view-receivables .recv-adjust-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:6px}
+#view-receivables .recv-adjust-grid>div{padding:10px;border-radius:8px;background:#f5f8fb;display:flex;justify-content:space-between;gap:10px}
+#view-receivables .recv-adjust-grid span{font-size:.8rem}#view-receivables .recv-adjust-grid b{font-variant-numeric:tabular-nums}
+
 
 
 #view-receivables .recv-summary-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
-#view-receivables .recv-summary-total:last-child td{background:#d9d9d9!important;border-top:3px solid #6e6e6e}#view-receivables .recv-detected{padding:12px 16px;background:#eef6ff;border-radius:8px;margin:12px}@media(max-width:1100px){#view-receivables .recv-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-two{grid-template-columns:1fr}}@media(max-width:650px){#view-receivables .recv-kpis{grid-template-columns:1fr}}`;document.head.appendChild(s)}
+#view-receivables .recv-summary-total:last-child td{background:#d9d9d9!important;border-top:3px solid #6e6e6e}#view-receivables .recv-detected{padding:12px 16px;background:#eef6ff;border-radius:8px;margin:12px}@media(max-width:1100px){#view-receivables .recv-movement-kpis{grid-template-columns:repeat(3,1fr)}#view-receivables .recv-validation-grid{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-two{grid-template-columns:1fr}}@media(max-width:650px){#view-receivables .recv-movement-grid{grid-template-columns:1fr}#view-receivables .recv-movement-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-validation-grid{grid-template-columns:1fr}#view-receivables .recv-adjust-grid{grid-template-columns:1fr}#view-receivables .recv-kpis{grid-template-columns:1fr}}`;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
 function jsonp(url){return new Promise((res,rej)=>{const cb='recvJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2),sc=document.createElement('script'),sep=url.includes('?')?'&':'?',tm=setTimeout(()=>{done();rej(new Error('Receivables request timed out.'))},120000);function done(){clearTimeout(tm);try{delete window[cb]}catch(_){window[cb]=undefined}if(sc.parentNode)sc.parentNode.removeChild(sc)}window[cb]=d=>{done();res(d)};sc.onerror=()=>{done();rej(new Error('Could not load Google Sheet endpoint.'))};sc.src=url+sep+'callback='+encodeURIComponent(cb)+'&t='+Date.now();document.body.appendChild(sc)})}
