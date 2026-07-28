@@ -342,144 +342,41 @@ function ensureMgmtDefaults(){
   localStorage.setItem('cf_google_sheet_url', saved);
 }
 
-function exeCellInfo(cell){
-  if(cell === null || cell === undefined) return {text:'', bold:false, italic:false};
-  if(typeof cell !== 'object') return {text:cleanText(cell), bold:false, italic:false};
-
-  const raw = cell.formattedValue ?? cell.displayValue ?? cell.text ?? cell.value ?? '';
-  const fmt = cell.textFormat || cell.format || cell.userEnteredFormat?.textFormat || cell.effectiveFormat?.textFormat || {};
-  return {
-    text: cleanText(raw),
-    bold: Boolean(cell.bold ?? fmt.bold),
-    italic: Boolean(cell.italic ?? fmt.italic)
-  };
-}
-
 function parseExeSummary(matrix){
   const rows=Array.isArray(matrix)?matrix:[];
   const blocks=[];
-  rows.forEach((r,rowIndex)=>{
-    const row=Array.isArray(r)?r:[r];
-    const cells=row.map(exeCellInfo).filter(c=>c.text);
-    if(!cells.length){
-      // Preserve the Google Sheet's blank-row spacing.
-      if(blocks.length && blocks[blocks.length-1].type!=='spacer') blocks.push({type:'spacer',rowIndex});
-      return;
-    }
-    blocks.push({
-      type:'content',
-      rowIndex,
-      text:cells.map(c=>c.text).join(' '),
-      bold:cells.some(c=>c.bold),
-      italic:cells.some(c=>c.italic)
-    });
+  rows.forEach(r=>{
+    const cells=(Array.isArray(r)?r:[]).map(c=>cleanText(c)).filter(Boolean);
+    if(!cells.length) return;
+    const first=cells[0];
+    const text=cells.length>1 ? cells.join(' ') : first;
+    blocks.push(text);
   });
-  while(blocks.length && blocks[blocks.length-1].type==='spacer') blocks.pop();
   return blocks;
 }
-
-function ensureExecNarrativeStyles(){
-  if(document.getElementById('execNarrativeBoardStyles')) return;
-  const style=document.createElement('style');
-  style.id='execNarrativeBoardStyles';
-  style.textContent=`
-    .exec-board-paper{max-width:1100px;margin:0 auto;color:#17233b;line-height:1.65}
-    .exec-board-title{margin:0;padding:22px 24px;background:linear-gradient(135deg,#102a56,#244f86);color:#fff;border-radius:14px 14px 0 0;font-size:25px;line-height:1.25;font-weight:800;letter-spacing:.1px}
-    .exec-board-date{display:flex;gap:8px;align-items:center;padding:11px 24px;background:#edf3fb;border:1px solid #d8e2ef;border-top:0;font-weight:700;color:#29466f}
-    .exec-board-content{padding:10px 24px 24px;border:1px solid #e0e7f0;border-top:0;border-radius:0 0 14px 14px;background:#fff}
-    .exec-board-section{margin:22px 0 0;padding:0 0 7px;border-bottom:2px solid #dbe5f0;color:#173d6f;font-size:18px;line-height:1.35;font-weight:800}
-    .exec-board-subsection{margin:17px 0 5px;color:#264f7e;font-size:15px;font-weight:800}
-    .exec-board-paragraph{margin:8px 0 0;text-align:left;color:#27364d}
-    .exec-board-list{margin:8px 0 0 20px;padding:0;color:#27364d}
-    .exec-board-list li{margin:5px 0;padding-left:3px}
-    .exec-board-spacer{height:9px}
-    .exec-board-emphasis{font-weight:800;color:#102f5d;white-space:nowrap}
-    .exec-board-source-bold{font-weight:800}
-    .exec-board-italic{font-style:italic}
-    @media print{
-      .exec-board-paper{max-width:none}.exec-board-title{background:#102a56!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .exec-board-content,.exec-board-date{break-inside:avoid}
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-function formatExecutiveInline(text){
-  let safe=escapeHtml(String(text||''));
-  // Optional markdown-style bold, useful when the Apps Script endpoint sends plain values only.
-  safe=safe.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
-  // Automatically emphasise management figures without changing their wording.
-  safe=safe.replace(/\b(AED|SAR|OMR|USD)\s*[\d,.]+(?:\s*(?:K|M|BN|B))?\b/gi,'<strong class="exec-board-emphasis">$&</strong>');
-  safe=safe.replace(/\b\d+(?:\.\d+)?%\b/g,'<strong class="exec-board-emphasis">$&</strong>');
-  return safe;
-}
-
-function executiveBlockText(block){
-  return typeof block==='string' ? String(block).trim() : String(block?.text||'').trim();
-}
-
-function isExecutiveHeading(text, sourceBold, index){
-  if(index===0) return 'title';
-  if(/^reporting\s+date\s*:/i.test(text)) return 'date';
-  if(/^[-•]\s+/.test(text) || /^\d+[.)]\s+/.test(text)) return 'list';
-  const endsLikeSentence=/[.!?;:]$/.test(text);
-  const words=text.split(/\s+/).filter(Boolean).length;
-  const known=/^(executive summary|cash position|cash collection|working capital|cash outflows?|cash inflows?|airport project|project status|revenue|cost|capex|items under review|other fixed payments|dividend|cash preservation|key financial priorities|dewa|funding|collections?)/i.test(text);
-  if(sourceBold && words<=18 && text.length<=120) return 'section';
-  if(known && words<=18 && text.length<=120) return 'section';
-  if(!endsLikeSentence && words<=10 && text.length<=85) return 'section';
-  return 'paragraph';
-}
-
 function renderExeSummaryBlocks(blocks){
   if(!$('execNarrative')) return;
-  if(!Array.isArray(blocks) || !blocks.some(b=>executiveBlockText(b))){
+  if(!Array.isArray(blocks) || !blocks.length){
     $('execNarrative').innerHTML='<div class="empty">No Executive Summary text was found in the Exe Sum tab.</div>';
     return;
   }
-  ensureExecNarrativeStyles();
-
-  const content=blocks.filter(b=>typeof b==='string' || b?.type==='spacer' || executiveBlockText(b));
-  let title='Executive Management Commentary';
-  let dateHtml='';
-  let body='';
-  let contentIndex=0;
-  let listOpen=false;
-
-  const closeList=()=>{ if(listOpen){ body+='</ul>'; listOpen=false; } };
-
-  content.forEach(block=>{
-    if(typeof block!=='string' && block?.type==='spacer'){
-      closeList(); body+='<div class="exec-board-spacer" aria-hidden="true"></div>'; return;
+  const sectionTitles=new Set(['Executive Summary','Cash Preservation and Cost Optimization Measures','Items Under Review','Key financial priorities in such a scenario would include:','Other fixed payments','Dividend','-Proposed Dividend Distribution and GCI Fee Settlement']);
+  let html='';
+  blocks.forEach((b,idx)=>{
+    const t=String(b||'').trim(); if(!t) return;
+    const isNum=/^\d+\s+/.test(t);
+    const isBullet=/^(Accelerating|Deferring|Negotiating|Following Actions)/i.test(t);
+    if(idx===0 || sectionTitles.has(t) || (!isNum && t.length<90 && /Measures|Review|Dividend|Summary|payments|priorities|Actions/i.test(t))){
+      html+=`<h3>${escapeHtml(t)}</h3>`;
+    }else if(isNum){
+      html+=`<p style="margin-left:14px"><strong>${escapeHtml(t.slice(0,1))}.</strong> ${escapeHtml(t.slice(1).trim())}</p>`;
+    }else if(isBullet){
+      html+=`<p style="margin-left:18px">• ${escapeHtml(t)}</p>`;
+    }else{
+      html+=`<p>${escapeHtml(t)}</p>`;
     }
-    const text=executiveBlockText(block); if(!text) return;
-    const sourceBold=typeof block==='object' && Boolean(block.bold);
-    const sourceItalic=typeof block==='object' && Boolean(block.italic);
-    const kind=isExecutiveHeading(text,sourceBold,contentIndex);
-    contentIndex++;
-
-    if(kind==='title'){
-      title=text; return;
-    }
-    if(kind==='date'){
-      const parts=text.split(/:(.+)/);
-      dateHtml=`<div class="exec-board-date"><span>${escapeHtml(parts[0]||'Reporting Date')}:</span><strong>${formatExecutiveInline(parts[1]||'')}</strong></div>`;
-      return;
-    }
-    if(kind==='list'){
-      if(!listOpen){ body+='<ul class="exec-board-list">'; listOpen=true; }
-      const item=text.replace(/^[-•]\s+/,'').replace(/^\d+[.)]\s+/,'');
-      body+=`<li>${formatExecutiveInline(item)}</li>`;
-      return;
-    }
-    closeList();
-    const classes=[sourceBold?'exec-board-source-bold':'',sourceItalic?'exec-board-italic':''].filter(Boolean).join(' ');
-    if(kind==='section') body+=`<h3 class="exec-board-section ${classes}">${formatExecutiveInline(text)}</h3>`;
-    else body+=`<p class="exec-board-paragraph ${classes}">${formatExecutiveInline(text)}</p>`;
   });
-  closeList();
-
-  $('execNarrative').innerHTML=`<article class="exec-board-paper"><h2 class="exec-board-title">${formatExecutiveInline(title)}</h2>${dateHtml}<div class="exec-board-content">${body}</div></article>`;
+  $('execNarrative').innerHTML=html || '<div class="empty">No Executive Summary text was found in the Exe Sum tab.</div>';
 }
 function periodHeaderHTML(periods, cols){
   return `<tr><th rowspan="2">Cash flow line</th>${cols.map(i=>`<th>${escapeHtml(periods[i]?.month||'')}</th>`).join('')}</tr><tr>${cols.map(i=>`<th>${escapeHtml(periods[i]?.period||periods[i]?.header||'')}</th>`).join('')}</tr>`;
@@ -856,16 +753,7 @@ function lastNonZero(arr, field){
 
 function getQiddiyaMonth(qd, mon){
   const qsum=(qd&&qd.monthlySummary)||[];
-  const target=String(mon||'').slice(0,3).toLowerCase();
-  const matches=qsum.filter(x=>String(x.month||x.header||'').slice(0,3).toLowerCase()===target);
-  if(!matches.length) return {};
-
-  // Monthly views must use the explicit monthly TOT column.  Qiddiya Balance
-  // also contains weekly/checkpoint columns, so taking the first month match
-  // would incorrectly return (for example) Jan 1-13 instead of Jan TOT.
-  return matches.find(x=>/^TOT$/i.test(cleanText(x.period||''))) ||
-    matches.find(x=>/Forecast/i.test(cleanText(x.period||x.header||x.key||''))) ||
-    matches[matches.length-1] || {};
+  return qsum.find(x=>String(x.month||'').slice(0,3).toLowerCase()===String(mon||'').slice(0,3).toLowerCase())||{};
 }
 function getGroupMonth(group, mon){
   const gsum=monthsOnly((group&&group.monthlySummary)||[]);
@@ -1002,15 +890,20 @@ function liquidityAtPeriodIndex(idx){
   const norm=v=>cleanText(v||'').toLowerCase().replace(/\s+/g,' ').trim();
   const pHeader=norm(p.header||p.month||'');
   const pPeriod=norm(p.period||'');
-  // Match by the visible period identity first. This is essential for TOT
-  // columns because an array/physical-column fallback can otherwise select the
-  // first weekly column of the month. Use source column and array index only as
-  // fallbacks when the exact heading + period pair is unavailable.
-  let q=qsum.find(x=>{
-    const xHeader=norm(x.header||x.month||'');
-    const xPeriod=norm(x.period||'');
-    return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
-  }) || qsum.find(x=>Number(x.col)===Number(p.col)) || qsum[idx] || {};
+  let q=qsum[idx]||{};
+  const qHeader=norm(q.header||q.month||'');
+  const qPeriod=norm(q.period||'');
+  const indexLooksAligned=(
+    (!pHeader || !qHeader || pHeader.slice(0,3)===qHeader.slice(0,3)) &&
+    (!pPeriod || !qPeriod || pPeriod===qPeriod)
+  );
+  if(!indexLooksAligned){
+    q=qsum.find(x=>{
+      const xHeader=norm(x.header||x.month||'');
+      const xPeriod=norm(x.period||'');
+      return xHeader.slice(0,3)===pHeader.slice(0,3) && xPeriod===pPeriod;
+    })||{};
+  }
 
   const vatBenefit=qiddiyaVatBenefit();
   const periods=(group.periods||[]);
@@ -1095,72 +988,24 @@ const currentMonth = reportDate
     );
   }
 
-  /*
-   * Show the restricted-cash adjustment in the target Forecast movement and
-   * also in that month's TOT summary. The TOT appearance is a summary only;
-   * it does not create a second cash movement.
-   */
-  const restrictedMonth = restrictedIdx >= 0
-    ? String(periods[restrictedIdx].month || periods[restrictedIdx].header || '').slice(0, 3)
-    : '';
-  const restrictedTotIdx = restrictedMonth
-    ? periods.findIndex(p =>
-        String(p.month || p.header || '').slice(0, 3) === restrictedMonth &&
-        /^TOT$/i.test(cleanText(p.period || ''))
-      )
-    : -1;
-
   const restrictedVals = periods.map((_, i) =>
-    (i === restrictedIdx || i === restrictedTotIdx)
-      ? Number(restrictedCash) || 0
-      : 0
+    i === restrictedIdx ? Number(restrictedCash) || 0 : 0
   );
 
   /*
-   * Supplier-payment handling.
-   *
-   * Some ALG-CB versions already include Total Supplier Payments inside
-   * Total Outflows; one earlier version omitted it for an individual period.
-   * Add the subtotal only when the component structure proves it is missing,
-   * preventing a blanket double count across the complete schedule.
+   * The ALG-CB Total Outflows row currently excludes the separate
+   * Total Supplier Payments subtotal, so include that subtotal.
    */
   const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
-  const totalOutflowSource = groupRowValues(/^Total Outflows$/i);
-  const capitalExpenses = groupRowValues(/^Capital Expenses$/i);
-  const subtotalRows = (group.rows || []).filter(r=>/^Sub Total$/i.test(cleanText(r.label||'')));
-  const tolerance = 0.75; // values are AED '000 and displayed rounded to whole thousands
 
-  const supplierSupplement = periods.map((_, i) => {
-    const supplier = Number(supplierTotal[i]) || 0;
-    if(!supplier) return 0;
-
-    const sourceTotal = Number(totalOutflowSource[i]) || 0;
-    const otherComponents = subtotalRows.reduce((sum,r)=>sum+(Number((r.values||[])[i])||0),0) +
-      (Number(capitalExpenses[i])||0);
-    const expectedIncludingSupplier = otherComponents + supplier;
-
-    if(Math.abs(sourceTotal - expectedIncludingSupplier) <= tolerance) return 0;
-    if(Math.abs((sourceTotal + supplier) - expectedIncludingSupplier) <= tolerance) return supplier;
-
-    // If component rows are unavailable/ambiguous, preserve the source total
-    // rather than risking a material double count.
-    return 0;
-  });
-
-  /*
-   * B13 is cash already held in the Group bank but economically committed to
-   * the Qiddiya project. Display the positive amount on its own row, but treat
-   * it as a negative inflow in the first current-month Forecast column so it
-   * reduces available liquidity and that Forecast closing balance exactly once.
-   */
   const totalInflows = adj.map((x, i) =>
-    (Number(x.inflows) || 0) -
-    Math.abs(Number(restrictedVals[i]) || 0)
+    (Number(x.inflows) || 0) +
+    (Number(restrictedVals[i]) || 0)
   );
 
   const totalOutflows = adj.map((x, i) =>
     (Number(x.outflows) || 0) +
-    (Number(supplierSupplement[i]) || 0)
+    (Number(supplierTotal[i]) || 0)
   );
 
   /*
@@ -1172,115 +1017,16 @@ const currentMonth = reportDate
    * Total Supplier Payments subtotal, so Opening + Inflows - Outflows always
    * agrees with Closing for weekly, forecast and monthly TOT columns.
    */
-  const isMonthlyTot = p => /^TOT$/i.test(cleanText(p.period || ''));
-  const isAnnualTotal = p => /^Total$/i.test(cleanText(p.month || p.header || ''));
+  const isGrandTotal = p =>
+    /^Total$/i.test(cleanText(p.month || p.header || ''));
 
-  /*
-   * Two linked chains are maintained:
-   *
-   * 1) Weekly / Forecast movement chain
-   *      next movement opening = previous movement closing.
-   *
-   * 2) Monthly TOT summary chain
-   *      Jan TOT opening = first opening of the year;
-   *      each later month TOT opening = previous month TOT closing;
-   *      month TOT closing = month TOT opening + month TOT inflows - outflows.
-   *
-   * This ensures, for example, Jun TOT closing becomes Jul TOT opening. A
-   * restricted-cash amount shown in Jul Forecast is also reflected in Jul TOT
-   * inflows and therefore in Jul TOT closing, without being counted twice as a
-   * movement.
-   */
-  const openingValues = periods.map(() => 0);
-  const closingValues = periods.map(() => 0);
-  let previousMovementClosing = null;
-  let previousMonthlyClosing = null;
-  const firstScheduleOpening = Number(adj.find((x, i) =>
-    !isMonthlyTot(periods[i]) && !isAnnualTotal(periods[i])
-  )?.opening) || 0;
-
-  periods.forEach((p, i) => {
-    if (isAnnualTotal(p)) {
-      // Annual comparison columns are handled separately below.
-      openingValues[i] = Number(adj[i].opening) || 0;
-      closingValues[i] = Number(adj[i].closing) || 0;
-      return;
-    }
-
-    if (isMonthlyTot(p)) {
-      openingValues[i] = previousMonthlyClosing === null
-        ? firstScheduleOpening
-        : previousMonthlyClosing;
-
-      /*
-       * A monthly TOT is a summary of that month's movement columns, not an
-       * additional cash-flow period. Its closing must therefore equal the last
-       * calculated weekly/forecast closing for the same month. Recalculating
-       * the TOT closing from source monthly totals can deduct the Qiddiya
-       * monthly outflow a second time (for July this created the AED 794 gap).
-       */
-      let lastMovementClosingForMonth = null;
-      for (let j = i - 1; j >= 0; j -= 1) {
-        const prior = periods[j] || {};
-        if (String(prior.month || prior.header || '').slice(0, 3) !==
-            String(p.month || p.header || '').slice(0, 3)) break;
-        if (!isMonthlyTot(prior) && !isAnnualTotal(prior)) {
-          lastMovementClosingForMonth = Number(closingValues[j]);
-          if (Number.isFinite(lastMovementClosingForMonth)) break;
-        }
-      }
-
-      closingValues[i] = Number.isFinite(lastMovementClosingForMonth)
-        ? lastMovementClosingForMonth
-        : openingValues[i] +
-          (Number(totalInflows[i]) || 0) -
-          (Number(totalOutflows[i]) || 0);
-
-      previousMonthlyClosing = closingValues[i];
-      return;
-    }
-
-    openingValues[i] = previousMovementClosing === null
-      ? (Number(adj[i].opening) || 0)
-      : previousMovementClosing;
-
-    closingValues[i] = openingValues[i] +
+  const openingValues = adj.map(x => Number(x.opening) || 0);
+  const closingValues = periods.map((p, i) => {
+    if (isGrandTotal(p)) return Number(adj[i].closing) || 0;
+    return (Number(openingValues[i]) || 0) +
       (Number(totalInflows[i]) || 0) -
       (Number(totalOutflows[i]) || 0);
-
-    previousMovementClosing = closingValues[i];
   });
-
-  /*
-   * Plain TOTAL columns at the far right are annual comparison summaries.
-   * The first plain TOTAL is the current year; the second is prior year.
-   * Opening and closing are point-in-time balances, not annual sums:
-   *   current-year TOTAL opening = first opening of the current-year schedule;
-   *   current-year TOTAL closing = final closing immediately before that TOTAL.
-   * Prior-year comparison values remain exactly as supplied by ALG-CB less
-   * Qiddiya Balance. This adjustment must not alter weekly/forecast rolling.
-   */
-  const plainTotalIndices = periods
-    .map((p, i) => /^Total$/i.test(cleanText(p.month || p.header || '')) ? i : -1)
-    .filter(i => i >= 0);
-
-  if (plainTotalIndices.length) {
-    const currentYearTotalIdx = plainTotalIndices[0];
-    const firstCurrentYearIdx = periods.findIndex((p, i) =>
-      i < currentYearTotalIdx && !/^Total$/i.test(cleanText(p.month || p.header || ''))
-    );
-    let finalCurrentYearIdx = currentYearTotalIdx - 1;
-    while (finalCurrentYearIdx >= 0 && /^Total$/i.test(cleanText(periods[finalCurrentYearIdx].month || periods[finalCurrentYearIdx].header || ''))) {
-      finalCurrentYearIdx -= 1;
-    }
-
-    if (firstCurrentYearIdx >= 0) {
-      openingValues[currentYearTotalIdx] = Number(openingValues[firstCurrentYearIdx]) || 0;
-    }
-    if (finalCurrentYearIdx >= 0) {
-      closingValues[currentYearTotalIdx] = Number(closingValues[finalCurrentYearIdx]) || 0;
-    }
-  }
 
   addRow(
     'Estimated Cash Balance Opening',
@@ -1433,79 +1179,33 @@ function liquidityDetailPeriodRows_backup(){
   addRow('Estimated Cash Balance Closing', adj.map(x=>x.closing), 'total');
   return {periods, rows};
 }
-function liquidityPeriodMeta(period){
-  const text=cleanText(period?.period||period?.header||period?.key||'');
-  const month=String(period?.month||period?.header||period?.key||'').slice(0,3);
-  return {
-    month,
-    isTot:/\bTOT\b|^Total$/i.test(text) || /^Total$/i.test(cleanText(period?.month||period?.header||'')),
-    isForecast:/Forecast/i.test(text)
-  };
-}
-function ensureLiquidityFriendlyStyles(){
-  if(typeof document==='undefined' || document.getElementById('liquidityFriendlyStyles')) return;
-  const style=document.createElement('style');
-  style.id='liquidityFriendlyStyles';
-  style.textContent=`
-    .sticky-report{border-collapse:separate;border-spacing:0;min-width:max-content;}
-    .sticky-report thead th{position:sticky;top:0;z-index:8;background:#f7f2e7;box-shadow:0 2px 0 #d6c8aa;}
-    .sticky-report th:first-child,.sticky-report td.rowhead{position:sticky;left:0;z-index:6;background:#fffaf0;box-shadow:2px 0 0 #e1d7c2;}
-    .sticky-report thead th:first-child{z-index:12;background:#f7f2e7;}
-    .sticky-report th.period-tot,.sticky-report td.period-tot{background:#fff1c9!important;border-left:2px solid #c99b38;border-right:2px solid #c99b38;font-weight:700;}
-    .sticky-report th.period-current,.sticky-report td.period-current{background:#eef7f4;}
-    .sticky-report th.period-forecast,.sticky-report td.period-forecast{background:#fbe9e5;}
-    .sticky-report tr.balance-opening td{position:sticky;top:34px;z-index:5;background:#fff8df!important;font-weight:800;border-bottom:2px solid #c99b38;}
-    .sticky-report tr.balance-opening td.rowhead{z-index:10;}
-    .sticky-report tr.balance-closing td{position:sticky;bottom:0;z-index:5;background:#eef7f4!important;font-weight:800;border-top:2px solid #0f6e5a;}
-    .sticky-report tr.balance-closing td.rowhead{z-index:10;}
-    .sticky-report tr.total td{font-weight:700;}
-  `;
-  document.head.appendChild(style);
-}
-function ensureLiquidityViewOptions(){
-  const el=$('liquidityViewMode');
-  if(!el) return;
-  const desired=[
-    ['current','Smart Period View'],
-    ['weekly','Weekly Detail'],
-    ['monthly','Monthly Summary']
-  ];
-  const existing=new Set(Array.from(el.options||[]).map(o=>o.value));
-  desired.forEach(([value,label])=>{
-    let opt=Array.from(el.options||[]).find(o=>o.value===value);
-    if(!opt){ opt=document.createElement('option'); opt.value=value; el.appendChild(opt); }
-    opt.textContent=label;
-  });
-  Array.from(el.options||[]).forEach(o=>{ if(!desired.some(([v])=>v===o.value)) o.remove(); });
-  if(!['current','weekly','monthly'].includes(el.value)) el.value='current';
-}
 function liquidityColumnSelection(periods){
-  ensureLiquidityViewOptions();
   const modeEl=$('liquidityViewMode');
   const mode=modeEl?modeEl.value:'current';
   const monthOrder={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-  const isTot=(p)=>liquidityPeriodMeta(p).isTot;
-  const isForecast=(p)=>liquidityPeriodMeta(p).isForecast;
+  const isTot=(p)=>/\bTOT\b|^Total$/i.test(cleanText(p.period||p.header||p.key||''));
+  const isForecast=(p)=>/Forecast/i.test(cleanText(p.period||p.header||p.key||''));
   const byMonth={};
-  periods.forEach((p,i)=>{ const m=liquidityPeriodMeta(p).month; if(monthOrder[m]!==undefined){ if(!byMonth[m]) byMonth[m]=[]; byMonth[m].push(i); } });
+  periods.forEach((p,i)=>{ const m=String(p.month||p.header||'').slice(0,3); if(monthOrder[m]!==undefined){ if(!byMonth[m]) byMonth[m]=[]; byMonth[m].push(i); } });
   const totIdxFor=(m)=> (byMonth[m]||[]).find(i=>isTot(periods[i]));
   if(mode==='weekly'){
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows every weekly, forecast and monthly total column from ALG-CB.';
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows all weekly, forecast and total columns exactly as read from ALG-CB.';
     return periods.map((_,i)=>i);
   }
   if(mode==='monthly'){
     const selected=[];
     Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly Summary shows January to December monthly TOT columns only.';
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly TOT Only shows only the monthly total columns for quick management review.';
     return selected.length?selected:periods.map((_,i)=>i);
   }
+  // Current reporting period: completed months = TOT, current month = weekly columns up to reporting date + forecast + TOT, future months = TOT
   const rpt=getCurrentReportingPeriodInfo();
   if(!rpt){
     const selected=[]; Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Smart Period View could not identify the reporting month, so monthly totals are shown.';
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period could not find a reporting date, so monthly totals are shown.';
     return selected.length?selected:periods.map((_,i)=>i);
   }
-  const curMonth=liquidityPeriodMeta(rpt.period).month;
+  const curMonth=String(rpt.period.month||rpt.period.header||'').slice(0,3);
   const curOrder=monthOrder[curMonth];
   const selected=[];
   Object.keys(monthOrder).forEach(m=>{
@@ -1516,53 +1216,36 @@ function liquidityColumnSelection(periods){
       const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx);
       return;
     }
-    // Active month: show all weekly columns, Forecast and TOT together.
-    indices.forEach(i=>selected.push(i));
+    // Current month: show weekly/current columns up to reporting period, plus forecast and total.
+    indices.forEach(i=>{
+      const p=periods[i];
+      if(i<=rpt.index || isForecast(p) || isTot(p)) selected.push(i);
+    });
   });
-  if($('liquidityViewNote')) $('liquidityViewNote').textContent='Smart Period View shows completed months as TOT, the current month by week plus Forecast and TOT, and future months as TOT.';
+  if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period shows completed months as totals, the active month by week/forecast, and future months as totals.';
   return [...new Set(selected)].filter(i=>i>=0 && i<periods.length).sort((a,b)=>a-b);
 }
 function renderLiquidityPeriodTable(){
-  ensureLiquidityFriendlyStyles();
-  ensureLiquidityViewOptions();
   const pack=liquidityDetailPeriodRows();
   const periods=pack.periods||[];
   const detailRows=pack.rows||[];
   if(!periods.length || !detailRows.length) return '<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
   const selected=liquidityColumnSelection(periods);
   const shownPeriods=selected.map(i=>periods[i]);
-  const reportDate=reportingDateObject();
-  const reportYear=reportDate?reportDate.getFullYear():new Date().getFullYear();
-  const rpt=getCurrentReportingPeriodInfo();
-  const currentMonth=rpt?liquidityPeriodMeta(rpt.period).month:'';
-  let plainTotalCount=0;
-  const columnClasses=shownPeriods.map(p=>{
-    const meta=liquidityPeriodMeta(p);
-    return [meta.isTot?'period-tot':'',meta.month===currentMonth?'period-current':'',meta.isForecast?'period-forecast':''].filter(Boolean).join(' ');
-  });
-  const headers=shownPeriods.map((p,j)=>{
-    const isPlainTotal=/^Total$/i.test(cleanText(p.month||p.header||''));
-    let label;
-    if(!isPlainTotal) label=periodShortLabel(p);
-    else {
-      plainTotalCount+=1;
-      label=plainTotalCount===1?`${reportYear} TOTAL`:plainTotalCount===2?`${reportYear-1} TOTAL`:`TOTAL ${plainTotalCount}`;
-    }
-    return `<th class="${columnClasses[j]}">${escapeHtml(label)}</th>`;
-  }).join('');
+  const headers=shownPeriods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('')+'<th>Total / Closing</th>';
   const body=detailRows.map(r=>{
-    if(r.type==='section') return `<tr class="section"><td colspan="${shownPeriods.length+1}">${escapeHtml(r.label)}</td></tr>`;
+    if(r.type==='section') return `<tr class="section"><td colspan="${shownPeriods.length+2}">${escapeHtml(r.label)}</td></tr>`;
     const lc=(r.label||'').toLowerCase();
     const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
     const allVals=(r.values||[]).map(v=>Number(v)||0);
     const vals=selected.map(i=>allVals[i]||0);
-    const balanceClass=/Estimated Cash Balance Opening/i.test(r.label||'')?' balance-opening':/Estimated Cash Balance Closing/i.test(r.label||'')?' balance-closing':'';
-    const rowClass=(r.type==='total'?' total':'')+balanceClass;
-    return `<tr class="${rowClass.trim()}"><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map((v,j)=>`<td class="num ${klass} ${columnClasses[j]}">${fmt(v)}</td>`).join('')}</tr>`;
+    const lastVal=allVals.length?allVals[allVals.length-1]:0;
+    const total=/opening/i.test(r.label)?(allVals[0]||0):(/closing|balance closing/i.test(r.label)?lastVal:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?allVals.reduce((a,b)=>a+b,0):0));
+    const rowClass=r.type==='total'?' class="total"':'';
+    return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
   }).join('');
   return `<table class="sticky-report"><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
 }
-
 function liquidityDetailRows(){
   const group=FORECAST_DATA.group||{};
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
@@ -1766,6 +1449,15 @@ async function refreshFromGoogleSheet(){
   saveGoogleSheetUrl(); setGoogleNotes('Refreshing from Google Sheet...');
   try{
     const json=await loadJsonp(url);
+
+    // Share the original Google Sheet response with feature modules.
+    // Receivables Intelligence uses this payload instead of downloading
+    // the same large DR dataset a second time.
+    window.GOOGLE_SHEET_RAW_PAYLOAD = json;
+    window.dispatchEvent(new CustomEvent('googleSheetPayloadReady', {
+      detail: json
+    }));
+
     const normalized=normalizeGooglePayload(json);
     Object.assign(FORECAST_DATA, normalized);
     DASHBOARD_DATA = normalized.dashboardData || null;
