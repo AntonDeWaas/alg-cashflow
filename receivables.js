@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v21.3
+// Receivables Intelligence Module v21.2
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -473,26 +473,15 @@ function parseLastPeriod(){
     const rows=[];
     if(h>=0)for(let i=h+1;i<source.length;i++){
       const r=source[i]||[];
-      const rowNo=clean(r[cfg.start]);
-      const accountType=clean(r[cfg.start+1]);
-      const accountCode=clean(r[cfg.start+2]);
-      const accountName=clean(r[cfg.start+3]);
+      const customer=clean(r[cfg.start+3]);
       const division=clean(r[cfg.start+4]);
+      if(!customer||/^(total|check)$/i.test(customer))continue;
       const total=num(r[cfg.start+5]);
       const b={};
       BK.forEach((k,j)=>b[k]=num(r[cfg.start+6+j]));
-
-      // Accept every genuine customer-detail row. Some ERP exports can have
-      // a blank account name while retaining row number/account code, so the
-      // parser must not drop the balance merely because Account Name is blank.
-      const isCustomerRow=/customer\s*ledge/i.test(accountType)||Boolean(accountCode)||/^\d+(?:\.0+)?$/.test(rowNo);
-      const isControl=/^(total|check)$/i.test(accountName)||/^(total|check)$/i.test(division);
-      if(!isCustomerRow||isControl)continue;
       if(total===0&&!BK.some(k=>b[k]!==0))continue;
-
-      const customer=accountName||accountCode||('Row '+rowNo);
       rows.push({
-        customer,accountCode,rowNo,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
+        customer,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
         over60:BK.slice(2).reduce((a,k)=>a+b[k],0),
         over90:BK.slice(3).reduce((a,k)=>a+b[k],0),
         over180:BK.slice(6).reduce((a,k)=>a+b[k],0),
