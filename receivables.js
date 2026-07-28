@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v21
+// Receivables Intelligence Module v21.1
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -61,12 +61,12 @@ function parseEntity(e){
     const r=m[i]||[],
       customer=clean(r[map.customer]),
       division=clean(r[map.division]),
-      total=Math.max(0,num(r[map.total]));
+      total=num(r[map.total]);
 
     if(!customer||/^total$|^check$/i.test(customer))continue;
 
     const b={};
-    BK.forEach(k=>b[k]=map[k]==null?0:Math.max(0,num(r[map[k]])));
+    BK.forEach(k=>b[k]=map[k]==null?0:num(r[map[k]]));
 
     if(!total&&!BK.some(k=>b[k]))continue;
 
@@ -79,9 +79,11 @@ function parseEntity(e){
 
     // Never allow an aging balance to exceed the customer's total.
     // This also protects ALU and ALIS from misaligned summary columns.
-    const reliableBase=total>0?total:bucketTotal;
-    const over90=Math.min(reliableBase,Math.max(0,bucketOver90));
-    const over180=Math.min(over90,Math.max(0,bucketOver180));
+    const reliableBase=total!==0?total:bucketTotal;
+    // Preserve signed customer balances. Credit balances must reduce the
+    // entity/division control total instead of being silently discarded.
+    const over90=bucketOver90;
+    const over180=bucketOver180;
 
     rows.push({
       customer,
@@ -441,27 +443,58 @@ function lastPeriodMap(headers){
   });
   return m;
 }
+function lastPeriodSummaryControl(source,cfg,headerRowIndex){
+  let explicit=null;
+  const byDivision={};
+  for(let i=0;i<headerRowIndex;i++){
+    const r=source[i]||[];
+    const label=clean(r[cfg.start+3]);
+    const amount=num(r[cfg.start+5]);
+    if(/^total$/i.test(label)){explicit=amount;continue}
+    const cls=movementClass(label);
+    if(cls!=='OTHER'&&label)byDivision[cls]=(byDivision[cls]||0)+amount;
+  }
+  const derived=Object.values(byDivision).reduce((a,v)=>a+v,0);
+  return {total:explicit!==null?explicit:derived,byDivision};
+}
 function parseLastPeriod(){
   const source=matrix(MOVEMENT_CONFIG.lastPeriodSheet),out={};
   MOVEMENT_CONFIG.lastBlocks.forEach(cfg=>{
-    const block=sliceBlock(source,cfg.start,cfg.end),h=detectBlockHeader(block),rows=[];
-    const map=h>=0?lastPeriodMap((block[h]||[]).map(clean)):{};
-    if(h>=0)for(let i=h+1;i<block.length;i++){
-      const r=block[i]||[],customer=clean(r[map.customer]),division=clean(r[map.division]);
+    // Fixed block structure: detail header contains Account Name in column D,
+    // Division in column E and Outstanding Amount in column F relative to
+    // each 20-column entity block.
+    let h=-1;
+    for(let i=0;i<source.length;i++){
+      const r=source[i]||[];
+      if(norm(r[cfg.start+3]).includes('accountname')&&
+         norm(r[cfg.start+4])==='dimension'&&
+         norm(r[cfg.start+5]).includes('outstandingamount')){h=i;break}
+    }
+    const rows=[];
+    if(h>=0)for(let i=h+1;i<source.length;i++){
+      const r=source[i]||[];
+      const customer=clean(r[cfg.start+3]);
+      const division=clean(r[cfg.start+4]);
       if(!customer||/^(total|check)$/i.test(customer))continue;
-      const b={};BK.forEach(k=>b[k]=map[k]==null?0:Math.max(0,num(r[map[k]])));
-      const total=Math.max(0,num(r[map.total]))||BK.reduce((a,k)=>a+b[k],0);
-      if(!total&&!BK.some(k=>b[k]))continue;
+      const total=num(r[cfg.start+5]);
+      const b={};
+      BK.forEach((k,j)=>b[k]=num(r[cfg.start+6+j]));
+      if(total===0&&!BK.some(k=>b[k]!==0))continue;
       rows.push({
         customer,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
-        over60:Math.min(total,BK.slice(2).reduce((a,k)=>a+b[k],0)),
-        over90:Math.min(total,BK.slice(3).reduce((a,k)=>a+b[k],0)),
-        over180:Math.min(total,BK.slice(6).reduce((a,k)=>a+b[k],0)),
-        over1yr:Math.min(total,(b['366_730']||0)+(b.gt731||0)),
-        over2yr:Math.min(total,b.gt731||0)
+        over60:BK.slice(2).reduce((a,k)=>a+b[k],0),
+        over90:BK.slice(3).reduce((a,k)=>a+b[k],0),
+        over180:BK.slice(6).reduce((a,k)=>a+b[k],0),
+        over1yr:(b['366_730']||0)+(b.gt731||0),
+        over2yr:b.gt731||0
       });
     }
-    out[cfg.id]={rows,headerFound:h>=0};
+    const detailTotal=rows.reduce((a,r)=>a+r.total,0);
+    const detailByDivision={};
+    rows.forEach(r=>detailByDivision[r.classCode]=(detailByDivision[r.classCode]||0)+r.total);
+    const summary=lastPeriodSummaryControl(source,cfg,h<0?0:h);
+    out[cfg.id]={rows,headerFound:h>=0,detailTotal,detailByDivision,summaryTotal:summary.total,summaryByDivision:summary.byDivision,
+      summaryDifference:detailTotal-summary.total};
   });
   return out;
 }
@@ -498,7 +531,8 @@ function movementLines(){
     const factor=S.entity==='GROUP'?cfg.fx:1;
     const current=(S.parsed[cfg.id]||{rows:[]}).rows;
     const movement=(details[cfg.id]||{rows:[]}).rows;
-    const previous=(last[cfg.id]||{rows:[]}).rows;
+    const priorInfo=last[cfg.id]||{rows:[],detailTotal:0,summaryTotal:0,summaryDifference:0};
+    const previous=priorInfo.rows;
     ['EPC','S&R','FP','GEN','O&G'].forEach(div=>{
       const cur=current.filter(r=>movementClass(r.division)===div),mov=movement.filter(r=>r.classCode===div),prv=previous.filter(r=>r.classCode===div);
       const ca=currentAgingMetrics(cur,factor),pa=priorAgingMetrics(prv,factor);
@@ -512,6 +546,8 @@ function movementLines(){
       if(!(pa.total||ca.total||billing||receipt||cheque||advance||creditReverse||creditIssue||pa.over90||ca.over90))return;
       lines.push({country:cfg.country,entity:cfg.label,entityId:cfg.id,division:div,currency:S.entity==='GROUP'?'AED':cfg(cfg.id).currency,
         opening:pa.total,billing,receipt,cheque,advance,creditReverse,creditIssue,calculatedClosing,closing:ca.total,reconciliation,
+        openingDetailControl:priorInfo.detailTotal*factor,openingSummaryControl:priorInfo.summaryTotal*factor,
+        openingControlDifference:priorInfo.summaryDifference*factor,
         opening60:pa.over60,closing60:ca.over60,opening90:pa.over90,closing90:ca.over90,
         opening180:pa.over180,closing180:ca.over180,opening1yr:pa.over1yr,closing1yr:ca.over1yr,
         opening2yr:pa.over2yr,closing2yr:ca.over2yr,movement:agedMovement,movementPct:agedPct});
@@ -530,18 +566,32 @@ function movementTotal(rows,label){
 }
 function movementStatus(v){return Math.abs(v)<=1?'Pass':'Warning'}
 function movementPctText(v){return v==='NEW'?'New':pct(v)}
+function openingValidationTable(){
+  const last=parseLastPeriod(),rows=[];
+  MOVEMENT_CONFIG.currentBlocks.forEach(c=>{
+    if(S.entity!=='GROUP'&&S.entity!==c.id)return;
+    const x=last[c.id]||{},factor=S.entity==='GROUP'?c.fx:1;
+    const detail=(x.detailTotal||0)*factor,summary=(x.summaryTotal||0)*factor,diff=detail-summary;
+    rows.push({entity:c.label,detail,summary,diff,currency:S.entity==='GROUP'?'AED':cfg(c.id).currency});
+  });
+  const body=rows.map(r=>{const ok=Math.abs(r.diff)<=1;return`<tr><td>${esc(r.entity)}</td><td>${esc(r.currency)}</td><td class="num">${fmt(r.detail)}</td><td class="num">${fmt(r.summary)}</td><td class="num ${ok?'recv-good':'recv-bad'}">${fmt(r.diff)}</td><td><span class="recv-status ${ok?'ok':'warn'}">${ok?'Reconciled':'Review'}</span></td></tr>`}).join('');
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Opening Detail Validation</h3><p class="hint">Detail rows are the reporting source; the summary is the control total.</p></div></div><div class="recv-table-wrap recv-no-x"><table class="recv-table recv-recon-table"><thead><tr><th>Entity</th><th>Currency</th><th>Detail Total</th><th>Summary Control</th><th>Difference</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+}
 function movementValidation(lines){
   const details=matrix(MOVEMENT_CONFIG.movementSheet),last=matrix(MOVEMENT_CONFIG.lastPeriodSheet);
+  const parsedLast=parseLastPeriod();
   const currentNames=MOVEMENT_CONFIG.currentBlocks.map(c=>first((C.entities.find(e=>e.id===c.id)||{sheets:[]}).sheets));
+  const relevant=MOVEMENT_CONFIG.currentBlocks.filter(c=>S.entity==='GROUP'||S.entity===c.id);
   const checks=[
     ['DR-Movement Details loaded',details.length>0],['DR-Last Period loaded',last.length>0],
     ['All current DR entity sheets loaded',currentNames.every(Boolean)],
-    ['Fixed movement blocks detected',MOVEMENT_CONFIG.currentBlocks.every(c=>fixedMovementRows(c).length>0)],
+    ['Fixed movement blocks detected',relevant.every(c=>fixedMovementRows(c).length>0)],
+    ['Opening detail headers detected',relevant.every(c=>parsedLast[c.id]&&parsedLast[c.id].headerFound)],
     ['Opening totals available',lines.some(x=>x.opening!==0)],['Closing totals available',lines.some(x=>x.closing!==0)],
     ['Currency rates applied',S.entity!=='GROUP'||(MOVEMENT_CONFIG.currentBlocks.find(x=>x.id==='ALU').fx===.975&&MOVEMENT_CONFIG.currentBlocks.find(x=>x.id==='ALIS').fx===9.5)],
     ['Reconciliation completed',lines.length>0]
   ];
-  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Data Validation</h3></div></div><div class="recv-validation-grid">${checks.map(([l,ok])=>`<div class="recv-validation ${ok?'ok':'warn'}"><span>${ok?'✓':'!'}</span><b>${esc(l)}</b></div>`).join('')}</div></div>`;
+  return `<div class="card panel recv-panel"><div class="panelhead"><div><h3>Data Validation</h3></div></div><div class="recv-validation-grid">${checks.map(([l,ok])=>`<div class="recv-validation ${ok?'ok':'warn'}"><span>${ok?'✓':'!'}</span><b>${esc(l)}</b></div>`).join('')}</div></div>${openingValidationTable()}`;
 }
 function movementKpis(lines){
   const t=movementTotal(lines,'Group'),cc=S.entity==='GROUP'?'AED':cfg(S.entity).currency;
