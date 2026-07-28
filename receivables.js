@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v21.2
+// Receivables Intelligence Module v21.4
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -473,15 +473,26 @@ function parseLastPeriod(){
     const rows=[];
     if(h>=0)for(let i=h+1;i<source.length;i++){
       const r=source[i]||[];
-      const customer=clean(r[cfg.start+3]);
+      const rowNo=clean(r[cfg.start]);
+      const accountType=clean(r[cfg.start+1]);
+      const accountCode=clean(r[cfg.start+2]);
+      const accountName=clean(r[cfg.start+3]);
       const division=clean(r[cfg.start+4]);
-      if(!customer||/^(total|check)$/i.test(customer))continue;
       const total=num(r[cfg.start+5]);
       const b={};
       BK.forEach((k,j)=>b[k]=num(r[cfg.start+6+j]));
+
+      // Accept every genuine customer-detail row. Some ERP exports can have
+      // a blank account name while retaining row number/account code, so the
+      // parser must not drop the balance merely because Account Name is blank.
+      const isCustomerRow=/customer\s*ledge/i.test(accountType)||Boolean(accountCode)||/^\d+(?:\.0+)?$/.test(rowNo);
+      const isControl=/^(total|check)$/i.test(accountName)||/^(total|check)$/i.test(division);
+      if(!isCustomerRow||isControl)continue;
       if(total===0&&!BK.some(k=>b[k]!==0))continue;
+
+      const customer=accountName||accountCode||('Row '+rowNo);
       rows.push({
-        customer,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
+        customer,accountCode,rowNo,division:division||'Unassigned',classCode:movementClass(division),total,buckets:b,
         over60:BK.slice(2).reduce((a,k)=>a+b[k],0),
         over90:BK.slice(3).reduce((a,k)=>a+b[k],0),
         over180:BK.slice(6).reduce((a,k)=>a+b[k],0),
@@ -839,7 +850,11 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .recv-v21-table .num{font-variant-numeric:tabular-nums}
 
 #view-receivables .recv-summary-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
-#view-receivables .recv-summary-total:last-child td{background:#d9d9d9!important;border-top:3px solid #6e6e6e}#view-receivables .recv-detected{padding:12px 16px;background:#eef6ff;border-radius:8px;margin:12px}@media(max-width:1100px){#view-receivables .recv-movement-kpis{grid-template-columns:repeat(3,1fr)}#view-receivables .recv-validation-grid{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-two{grid-template-columns:1fr}}@media(max-width:650px){#view-receivables .recv-movement-grid{grid-template-columns:1fr}#view-receivables .recv-movement-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-validation-grid{grid-template-columns:1fr}#view-receivables .recv-adjust-grid{grid-template-columns:1fr}#view-receivables .recv-kpis{grid-template-columns:1fr}}`;document.head.appendChild(s)}
+#view-receivables .recv-summary-total:last-child td{background:#d9d9d9!important;border-top:3px solid #6e6e6e}#view-receivables .recv-detected{padding:12px 16px;background:#eef6ff;border-radius:8px;margin:12px}@media(max-width:1100px){#view-receivables .recv-movement-kpis{grid-template-columns:repeat(3,1fr)}#view-receivables .recv-validation-grid{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-two{grid-template-columns:1fr}}@media(max-width:650px){#view-receivables .recv-movement-grid{grid-template-columns:1fr}#view-receivables .recv-movement-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-validation-grid{grid-template-columns:1fr}#view-receivables .recv-adjust-grid{grid-template-columns:1fr}#view-receivables .recv-kpis{grid-template-columns:1fr}}#view-receivables .recv-entity-total td{font-weight:700;background:#f3f7fb!important;border-top:1px solid #c7d6e8}
+#view-receivables .recv-country-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
+#view-receivables .recv-group-total td{font-weight:900;background:#d1d1d1!important;border-top:3px solid #666}
+#view-receivables .recv-v21-table th,#view-receivables .recv-v21-table td{font-size:.72rem;padding:7px 5px;white-space:normal}
+`;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
 function jsonp(url){return new Promise((res,rej)=>{const cb='recvJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2),sc=document.createElement('script'),sep=url.includes('?')?'&':'?',tm=setTimeout(()=>{done();rej(new Error('Receivables request timed out.'))},120000);function done(){clearTimeout(tm);try{delete window[cb]}catch(_){window[cb]=undefined}if(sc.parentNode)sc.parentNode.removeChild(sc)}window[cb]=d=>{done();res(d)};sc.onerror=()=>{done();rej(new Error('Could not load Google Sheet endpoint.'))};sc.src=url+sep+'callback='+encodeURIComponent(cb)+'&t='+Date.now();document.body.appendChild(sc)})}
@@ -916,8 +931,3 @@ function boot(){
 window.RECEIVABLES_INTELLIGENCE={refresh,render,state:S,config:C,applyPayload};
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
 })();
-#view-receivables .recv-entity-total td{font-weight:700;background:#f3f7fb!important;border-top:1px solid #c7d6e8}
-#view-receivables .recv-country-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
-#view-receivables .recv-group-total td{font-weight:900;background:#d1d1d1!important;border-top:3px solid #666}
-#view-receivables .recv-v21-table th,#view-receivables .recv-v21-table td{font-size:.72rem;padding:7px 5px;white-space:normal}
-
