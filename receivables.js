@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v20
+// Receivables Intelligence Module v20.2
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -380,11 +380,12 @@ function aging(a,rs){
 
 function movementClass(name){
   const n=clean(name).toUpperCase();
-  if(['CONSTRUCTION','MAST CLIMBERS','EVENTS'].includes(n))return'EPC';
-  if(['POWERED ACCESS','SITE SERVICES'].includes(n))return'S&R';
-  if(n==='FILM PRODUCTION')return'FP';
-  if(n==='GENERAL'||n.includes('RELATED PART'))return'GEN';
-  if(n==='OIL & GAS'||n==='OIL AND GAS')return'O&G';
+  // DR-Movement Details uses short DIV codes, while aging sheets use full names.
+  if(['CONST','CONSTRUCTION','MC','MAST CLIMBER','MAST CLIMBERS','MAST CLIMBING','EV','EVENT','EVENTS'].includes(n))return'EPC';
+  if(['PA','POWERED ACCESS','SS','SITE SERVICE','SITE SERVICES'].includes(n))return'S&R';
+  if(['FP','FILM PRODUCTION'].includes(n))return'FP';
+  if(['GEN','GENERAL'].includes(n)||n.includes('RELATED PART'))return'GEN';
+  if(['O&G','OG','OIL & GAS','OIL AND GAS'].includes(n))return'O&G';
   return'OTHER';
 }
 function sliceBlock(m,start,end){return(m||[]).map(r=>(r||[]).slice(start,end+1))}
@@ -481,6 +482,15 @@ function priorAgingMetrics(rows,factor){
   rows.forEach(r=>Object.keys(x).forEach(k=>x[k]+=(r[k]||0)*factor));
   return x;
 }
+function manualOpening(cfg){
+  const source=matrix(MOVEMENT_CONFIG.movementSheet);
+  if(!source.length)return 0;
+  // Row 2 contains AED-converted opening balances; row 3 contains native currency.
+  // The opening value is the third column in each entity block.
+  const rowIndex=S.entity==='GROUP'?1:2;
+  const r=source[rowIndex]||[];
+  return num(r[cfg.start+2])*(S.entity==='GROUP'?1:1);
+}
 function movementLines(){
   const details=parseMovementDetails(),last=parseLastPeriod(),lines=[];
   MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>{
@@ -506,6 +516,20 @@ function movementLines(){
         opening180:pa.over180,closing180:ca.over180,opening1yr:pa.over1yr,closing1yr:ca.over1yr,
         opening2yr:pa.over2yr,closing2yr:ca.over2yr,movement:agedMovement,movementPct:agedPct});
     });
+
+    // Reconcile division-level prior-period data to the manually controlled entity opening.
+    // This preserves the exact Group opening while keeping differences visible.
+    const entityRows=lines.filter(x=>x.entityId===cfg.id);
+    const divisionOpening=entityRows.reduce((a,x)=>a+x.opening,0);
+    const controlledOpening=manualOpening(cfg);
+    const openingDifference=controlledOpening-divisionOpening;
+    if(Math.abs(openingDifference)>.5){
+      lines.push({country:cfg.country,entity:cfg.label,entityId:cfg.id,division:'Opening Reconciliation',currency:S.entity==='GROUP'?'AED':cfg(cfg.id).currency,
+        opening:openingDifference,billing:0,receipt:0,cheque:0,advance:0,creditReverse:0,creditIssue:0,
+        calculatedClosing:openingDifference,closing:0,reconciliation:-openingDifference,
+        opening60:0,closing60:0,opening90:0,closing90:0,opening180:0,closing180:0,
+        opening1yr:0,closing1yr:0,opening2yr:0,closing2yr:0,movement:0,movementPct:0});
+    }
   });
   return lines;
 }
