@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v17
+// Receivables Intelligence Module v18
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -12,6 +12,26 @@ const C={entities:[
 {id:'ALPS_UZ',label:'ALPS UZ',currency:'AED',fx:1,sheets:['DR-ALPS UZ-System']},
 {id:'ALPS_PE',label:'ALPS PE',currency:'AED',fx:1,sheets:['DR-ALPS-PE-System','DR-ALPS PE-System']}
 ],history:['Receivable History','Receivables History'],targets:['Collection Targets'],actuals:['Collection Actuals'],movement:['Receivable Movement','Receivables Movement']};
+
+const MOVEMENT_CONFIG={
+  movementSheet:'DR-Movement Details',
+  lastPeriodSheet:'DR-Last Period',
+  currentBlocks:[
+    {id:'ALPS',label:'ALPS',country:'UAE',fx:1,start:0,end:9},
+    {id:'ALICLER',label:'ALICLER',country:'UAE',fx:1,start:11,end:20},
+    {id:'ALPS_UZ',label:'ALPS UZ',country:'UZBEKISTAN',fx:1,start:22,end:31},
+    {id:'ALU',label:'ALU',country:'KSA',fx:.975,start:33,end:42},
+    {id:'ALIS',label:'ALIS',country:'OMAN',fx:9.5,start:44,end:53}
+  ],
+  lastBlocks:[
+    {id:'ALPS',start:0,end:19},
+    {id:'ALU',start:22,end:41},
+    {id:'ALIS',start:44,end:63},
+    {id:'ALICLER',start:66,end:85},
+    {id:'ALPS_UZ',start:88,end:107}
+  ]
+};
+
 const S={payload:null,entity:'GROUP',section:'overview',parsed:{},updated:null,wrapped:false};
 const $=id=>document.getElementById(id),clean=v=>String(v==null?'':v).replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 const esc=v=>clean(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
@@ -357,8 +377,169 @@ function aging(a,rs){
   </div>
   ${entityDivisionSummary(rs)}`;
 }
+
+function movementClass(name){
+  const n=clean(name).toUpperCase();
+  if(['CONSTRUCTION','MAST CLIMBERS','EVENTS'].includes(n))return'EPC';
+  if(['POWERED ACCESS','SITE SERVICES'].includes(n))return'S&R';
+  if(n==='FILM PRODUCTION')return'FP';
+  if(n==='GENERAL'||n.includes('RELATED PART'))return'GEN';
+  if(n==='OIL & GAS'||n==='OIL AND GAS')return'O&G';
+  return'OTHER';
+}
+function sliceBlock(m,start,end){return(m||[]).map(r=>(r||[]).slice(start,end+1))}
+function detectBlockHeader(block,required){
+  let best=-1,score=-1;
+  block.forEach((r,i)=>{
+    const h=(r||[]).map(norm);let s=0;
+    required.forEach(x=>{if(h.some(v=>v.includes(x)))s++});
+    if(s>score){score=s;best=i}
+  });
+  return score>=Math.max(2,required.length-1)?best:-1;
+}
+function movementMap(headers){
+  const m={};
+  headers.forEach((h,i)=>{
+    const n=norm(h);
+    if(m.code==null&&(n.includes('acccode')||n.includes('accountcode')))m.code=i;
+    if(m.name==null&&(n.includes('accname')||n.includes('accountname')))m.name=i;
+    if(m.div==null&&(n.includes('divcode')||n==='division'||n==='dimension'))m.div=i;
+    if(m.billing==null&&n.includes('dramt')&&!n.includes('jnrl')&&!n.includes('crnt'))m.billing=i;
+    if(m.receipt==null&&n.includes('cramt')&&!n.includes('jnrl')&&!n.includes('crnt'))m.receipt=i;
+    if(m.cheque==null&&n.includes('dramt')&&n.includes('jnrl'))m.cheque=i;
+    if(m.advance==null&&n.includes('cramt')&&n.includes('jnrl'))m.advance=i;
+    if(m.creditReverse==null&&n.includes('dramt')&&n.includes('crnt'))m.creditReverse=i;
+    if(m.creditIssue==null&&n.includes('cramt')&&n.includes('crnt'))m.creditIssue=i;
+  });
+  return m;
+}
+function parseMovementDetails(){
+  const source=matrix(MOVEMENT_CONFIG.movementSheet),out={};
+  MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>{
+    const block=sliceBlock(source,cfg.start,cfg.end),
+      h=detectBlockHeader(block,['acccode','accname','divcode','dramt','cramt']),
+      map=h>=0?movementMap((block[h]||[]).map(clean)):{},
+      rows=[];
+    if(h>=0)for(let i=h+1;i<block.length;i++){
+      const r=block[i]||[],name=clean(r[map.name]),division=clean(r[map.div]);
+      if(!name&&!division)continue;
+      const row={
+        name,division:division||'Unassigned',classCode:movementClass(division),
+        billing:Math.max(0,num(r[map.billing])),
+        receipt:Math.max(0,num(r[map.receipt])),
+        cheque:Math.max(0,num(r[map.cheque])),
+        advance:Math.max(0,num(r[map.advance])),
+        creditReverse:Math.max(0,num(r[map.creditReverse])),
+        creditIssue:Math.max(0,num(r[map.creditIssue]))
+      };
+      if(row.billing||row.receipt||row.cheque||row.advance||row.creditReverse||row.creditIssue)rows.push(row);
+    }
+    out[cfg.id]={rows};
+  });
+  return out;
+}
+function lastPeriodMap(headers){
+  const m={};
+  headers.forEach((h,i)=>{
+    const n=norm(h);
+    if(m.customer==null&&(n.includes('accountname')||n.includes('customername')))m.customer=i;
+    if(m.division==null&&(n==='dimension'||n==='division'))m.division=i;
+    if(m.total==null&&(n.includes('outstandingamount')||n==='totalreceivable'))m.total=i;
+    const t=[['0_30',/^(a)?030$/],['31_60',/^3160$/],['61_90',/^6190$/],['91_120',/^91120$/],
+      ['121_150',/^121150$/],['151_180',/^151180$/],['181_210',/^181210$/],['211_240',/^211240$/],
+      ['241_270',/^241270$/],['271_300',/^271300$/],['301_330',/^301330$/],['331_365',/^331365$/],
+      ['366_730',/^366730$/],['gt731',/^>731$/]];
+    t.forEach(([k,rx])=>{if(m[k]==null&&rx.test(n))m[k]=i});
+  });
+  return m;
+}
+function parseLastPeriod(){
+  const source=matrix(MOVEMENT_CONFIG.lastPeriodSheet),out={};
+  MOVEMENT_CONFIG.lastBlocks.forEach(cfg=>{
+    const block=sliceBlock(source,cfg.start,cfg.end),
+      h=detectBlockHeader(block,['accountname','dimension','outstandingamount']),
+      map=h>=0?lastPeriodMap((block[h]||[]).map(clean)):{},
+      rows=[];
+    if(h>=0)for(let i=h+1;i<block.length;i++){
+      const r=block[i]||[],customer=clean(r[map.customer]),division=clean(r[map.division]);
+      if(!customer||/^total$|^check$/i.test(customer))continue;
+      const buckets={};BK.forEach(k=>buckets[k]=map[k]==null?0:Math.max(0,num(r[map[k]])));
+      const total=Math.max(0,num(r[map.total]))||BK.reduce((a,k)=>a+buckets[k],0);
+      if(!total&&!BK.some(k=>buckets[k]))continue;
+      rows.push({division:division||'Unassigned',classCode:movementClass(division),total,
+        over90:Math.min(total,BK.slice(3).reduce((a,k)=>a+buckets[k],0))});
+    }
+    out[cfg.id]={rows};
+  });
+  return out;
+}
+function movementLines(){
+  const details=parseMovementDetails(),last=parseLastPeriod(),lines=[];
+  MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>{
+    const f=cfg.fx,current=(S.parsed[cfg.id]||{rows:[]}).rows,
+      movement=(details[cfg.id]||{rows:[]}).rows,previous=(last[cfg.id]||{rows:[]}).rows;
+    ['EPC','S&R','FP','GEN','O&G'].forEach(div=>{
+      const cur=current.filter(r=>movementClass(r.division)===div),
+        mov=movement.filter(r=>r.classCode===div),prv=previous.filter(r=>r.classCode===div);
+      const x={
+        country:cfg.country,entity:cfg.label,division:div,
+        opening:prv.reduce((a,r)=>a+r.total*f,0),
+        billing:mov.reduce((a,r)=>a+r.billing*f,0),
+        receipt:mov.reduce((a,r)=>a+r.receipt*f,0),
+        cheque:mov.reduce((a,r)=>a+r.cheque*f,0),
+        creditNotes:mov.reduce((a,r)=>a+(r.advance+r.creditIssue-r.creditReverse)*f,0),
+        closing:cur.reduce((a,r)=>a+r.total*f,0),
+        opening90:prv.reduce((a,r)=>a+r.over90*f,0),
+        closing90:cur.reduce((a,r)=>a+r.over90*f,0)
+      };
+      x.movement=x.closing90-x.opening90;
+      x.movementPct=x.opening90?x.movement/x.opening90*100:0;
+      if(Object.keys(x).some(k=>typeof x[k]==='number'&&x[k]!==0))lines.push(x);
+    });
+  });
+  return lines;
+}
+function movementTotal(rows,label){
+  const x={country:label,entity:'',division:'Total'};
+  ['opening','billing','receipt','cheque','creditNotes','closing','opening90','closing90','movement']
+    .forEach(k=>x[k]=rows.reduce((a,r)=>a+(r[k]||0),0));
+  x.movementPct=x.opening90?x.movement/x.opening90*100:0;
+  return x;
+}
+function movementChart(lines){
+  const g={};lines.forEach(r=>{if(!g[r.division])g[r.division]={opening:0,closing:0};g[r.division].opening+=r.opening90;g[r.division].closing+=r.closing90});
+  const max=Math.max(1,...Object.values(g).flatMap(x=>[x.opening,x.closing]));
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Receivables Aged Over 90 Days by Division</h3></div></div>
+    <div class="recv-movement-chart">${Object.entries(g).map(([d,x])=>`<div class="recv-move-group"><div class="recv-move-label">${esc(d)}</div><div>
+      <div class="recv-move-line"><span>Opening</span><i class="open" style="width:${Math.max(1,x.opening/max*100)}%"></i><b>${fmt(x.opening)}</b></div>
+      <div class="recv-move-line"><span>Closing</span><i class="close" style="width:${Math.max(1,x.closing/max*100)}%"></i><b>${fmt(x.closing)}</b></div>
+    </div></div>`).join('')}</div></div>`;
+}
+function movementBrief(lines){
+  const t=movementTotal(lines,'Group'),change=t.closing-t.opening,aged=t.closing90-t.opening90;
+  return`<div class="card panel recv-panel recv-brief"><div class="panelhead"><div><h3>Executive Summary Brief</h3></div></div>
+    <p>Group receivables moved from <strong>AED ${fmt(t.opening)}</strong> to <strong>AED ${fmt(t.closing)}</strong>, a ${change<=0?'reduction':'increase'} of <strong>AED ${fmt(Math.abs(change))}</strong>.</p>
+    <p>Receivables aged over 90 days moved from <strong>AED ${fmt(t.opening90)}</strong> to <strong>AED ${fmt(t.closing90)}</strong>, a ${aged<=0?'improvement':'deterioration'} of <strong>AED ${fmt(Math.abs(aged))}</strong>.</p>
+  </div>`;
+}
+function renderMovementAnalysis(){
+  const lines=movementLines();
+  if(!lines.length)return`<div class="card panel recv-panel"><div class="empty">Movement data was not detected. Confirm Apps Script exports <strong>DR-Movement Details</strong> and <strong>DR-Last Period</strong>.</div></div>`;
+  const groups={};lines.forEach(r=>{if(!groups[r.country])groups[r.country]=[];groups[r.country].push(r)});
+  const rows=[];Object.keys(groups).forEach(c=>{rows.push(...groups[c]);rows.push(movementTotal(groups[c],c))});rows.push(movementTotal(lines,'Group'));
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Receivable Movement Analysis by Country &amp; Division</h3><p class="hint">AED · Current movement versus archived prior period</p></div></div>
+    <div class="recv-table-wrap"><table class="recv-table recv-movement-table"><thead><tr>
+      <th>Country</th><th>Entity</th><th>Division</th><th>Opening</th><th>Billing</th><th>Receipt</th><th>Chq RTN/Refund</th>
+      <th>Credit Notes / Adjustments</th><th>Closing</th><th>Opening &gt;90</th><th>Closing &gt;90</th><th>Movement</th><th>%</th>
+    </tr></thead><tbody>${rows.map(r=>{const total=r.division==='Total',mc=r.movement>0?'recv-bad':r.movement<0?'recv-good':'';return`<tr class="${total?'recv-movement-total':''}">
+      <td>${esc(r.country)}</td><td>${esc(r.entity)}</td><td>${esc(r.division)}</td><td class="num">${fmt(r.opening)}</td><td class="num">${fmt(r.billing)}</td>
+      <td class="num">${fmt(r.receipt)}</td><td class="num">${fmt(r.cheque)}</td><td class="num">${fmt(r.creditNotes)}</td><td class="num">${fmt(r.closing)}</td>
+      <td class="num">${fmt(r.opening90)}</td><td class="num">${fmt(r.closing90)}</td><td class="num ${mc}">${fmt(r.movement)}</td>
+      <td class="num recv-pct-cell ${mc}">${pct(r.movementPct)}</td></tr>`}).join('')}</tbody></table></div></div>
+    ${movementChart(lines)}${movementBrief(lines)}`;
+}
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='movement')root.innerHTML=optional('movement');else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
+function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
 #view-receivables .recv-summary-table{min-width:1120px}
@@ -370,6 +551,22 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .recv-table tbody tr:nth-child(even) .recv-pct-cell{background:#e3f3eb!important}
 #view-receivables .recv-summary-total .recv-pct-cell{background:#cfe4d8!important}
 #view-receivables .recv-aging-table{min-width:1260px}
+
+#view-receivables .recv-movement-table{min-width:1550px}
+#view-receivables .recv-movement-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
+#view-receivables .recv-movement-total:last-child td{background:#d8d8d8!important;border-top:3px solid #666}
+#view-receivables .recv-good{color:#14824b!important;font-weight:800}
+#view-receivables .recv-bad{color:#c0392b!important;font-weight:800}
+#view-receivables .recv-movement-chart{padding:8px}
+#view-receivables .recv-move-group{display:grid;grid-template-columns:90px 1fr;gap:10px;margin:14px 0}
+#view-receivables .recv-move-label{font-weight:800}
+#view-receivables .recv-move-line{display:grid;grid-template-columns:65px 1fr 115px;gap:8px;align-items:center;margin:5px 0}
+#view-receivables .recv-move-line i{height:18px;border-radius:3px;display:block}
+#view-receivables .recv-move-line i.open{background:#74a8e8}
+#view-receivables .recv-move-line i.close{background:#58c993}
+#view-receivables .recv-move-line b{text-align:right}
+#view-receivables .recv-brief p{line-height:1.6;margin:10px 0}
+
 
 #view-receivables .recv-summary-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
 #view-receivables .recv-summary-total:last-child td{background:#d9d9d9!important;border-top:3px solid #6e6e6e}#view-receivables .recv-detected{padding:12px 16px;background:#eef6ff;border-radius:8px;margin:12px}@media(max-width:1100px){#view-receivables .recv-kpis{grid-template-columns:repeat(2,1fr)}#view-receivables .recv-two{grid-template-columns:1fr}}@media(max-width:650px){#view-receivables .recv-kpis{grid-template-columns:1fr}}`;document.head.appendChild(s)}
