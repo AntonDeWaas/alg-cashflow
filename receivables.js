@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v21.5
+// Receivables Intelligence Module v22
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -146,7 +146,7 @@ function aggregate(rs){
 }
 const currency=()=>S.entity==='GROUP'?'AED':cfg(S.entity).currency;
 function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerHTML=C.entities.map(e=>{const ok=e.id==='GROUP'||(S.parsed[e.id]&&S.parsed[e.id].rows.length);return`<button class="recv-pill ${S.entity===e.id?'active':''}" data-e="${e.id}" ${ok?'':'disabled'}>${esc(e.label)}${e.id==='ALU'?' · SAR':e.id==='ALIS'?' · OMR':''}</button>`}).join('');root.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{S.entity=b.dataset.e;render()})}
-function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['customers','Top Customers'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
+function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['customers','Top Customers'],['customerMovement','Over 180 Movement'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
 function topTable(rs,field,title){
@@ -798,8 +798,111 @@ function renderMovementAnalysis(){
   const adjustments=adjustmentsTable(lines);
   return `${movementValidation(lines)}${movementKpis(lines)}${compactMovementTable(lines)}${movementWaterfall(lines)}<div class="recv-movement-grid">${compactAgingTable(lines)}${reconciliationTable(lines)}</div>${adjustments?`<div class="recv-movement-grid">${adjustments}${movementBrief(lines)}</div>`:movementBrief(lines)}`;
 }
+
+function customerKey(entityId,code,name,division){
+  const c=norm(code);
+  if(c)return entityId+'|CODE|'+c;
+  return entityId+'|NAME|'+norm(name)+'|'+norm(division);
+}
+function over180CustomerMovement(){
+  const prior=parseLastPeriod(),records=[];
+  MOVEMENT_CONFIG.currentBlocks.forEach(block=>{
+    if(S.entity!=='GROUP'&&S.entity!==block.id)return;
+    const entityCfg=cfg(block.id),factor=S.entity==='GROUP'?block.fx:1;
+    const current=(S.parsed[block.id]||{rows:[]}).rows;
+    const previous=(prior[block.id]||{rows:[]}).rows;
+    const map=new Map();
+
+    function getRow(key,seed){
+      if(!map.has(key))map.set(key,Object.assign({
+        entityId:block.id,entity:block.label,country:block.country,
+        previous:0,current:0,currency:S.entity==='GROUP'?'AED':entityCfg.currency
+      },seed));
+      return map.get(key);
+    }
+
+    previous.forEach(r=>{
+      const key=customerKey(block.id,r.accountCode,r.customer,r.division);
+      const x=getRow(key,{customer:r.customer,code:r.accountCode||'',division:r.division||'Unassigned'});
+      x.previous+=(r.over180||0)*factor;
+    });
+    current.forEach(r=>{
+      const key=customerKey(block.id,r.code,r.customer,r.division);
+      const x=getRow(key,{customer:r.customer,code:r.code||'',division:r.division||'Unassigned'});
+      x.current+=(r.over180||0)*factor;
+    });
+
+    map.forEach(x=>{
+      x.movement=x.current-x.previous;
+      if(x.previous===0&&x.current>0)x.status='New';
+      else if(x.previous>0&&x.current===0)x.status='Cleared';
+      else if(x.movement>0.5)x.status='Increased';
+      else if(x.movement<-0.5)x.status='Improved';
+      else x.status='No Change';
+      if(x.previous!==0||x.current!==0)records.push(x);
+    });
+  });
+
+  return records.sort((a,b)=>{
+    const av=Math.max(Math.abs(a.movement),Math.abs(a.current),Math.abs(a.previous));
+    const bv=Math.max(Math.abs(b.movement),Math.abs(b.current),Math.abs(b.previous));
+    return bv-av;
+  });
+}
+function customerMovementStatusClass(status){
+  if(status==='Cleared'||status==='Improved')return'recv-good';
+  if(status==='New'||status==='Increased')return'recv-bad';
+  return'';
+}
+function customerMovementTable(records){
+  const ccy=currency(),top=records.slice(0,10);
+  const body=top.map((r,i)=>`<tr>
+    <td>${i+1}</td><td class="recv-customer-name">${esc(r.customer)}</td>
+    <td>${esc(r.entity)}</td><td>${esc(r.division)}</td>
+    <td class="num">${fmt(r.previous)}</td><td class="num">${fmt(r.current)}</td>
+    <td class="num ${customerMovementStatusClass(r.status)}">${fmt(r.movement)}</td>
+    <td class="${customerMovementStatusClass(r.status)}">${esc(r.status)}</td>
+  </tr>`).join('');
+  return `<div class="card panel recv-panel"><div class="panelhead"><div>
+    <h3>Top 10 Customer Movement — Over 180 Days</h3>
+    <p class="hint">Previous: DR-Last Period · Current: live DR entity sheets · ${esc(ccy)}</p>
+  </div></div><div class="recv-table-wrap recv-no-x"><table class="recv-table recv-over180-table">
+    <thead><tr><th>#</th><th>Customer</th><th>Entity</th><th>Division</th>
+    <th>Previous &gt;180</th><th>Current &gt;180</th><th>Movement</th><th>Status</th></tr></thead>
+    <tbody>${body||'<tr><td colspan="8" class="empty">No customers with balances over 180 days were detected.</td></tr>'}</tbody>
+  </table></div></div>`;
+}
+function customerMovementChart(records){
+  const top=records.filter(r=>Math.abs(r.movement)>.5).slice(0,10);
+  if(!top.length)return'';
+  const max=Math.max(1,...top.map(r=>Math.abs(r.movement)));
+  return `<div class="card panel recv-panel"><div class="panelhead"><div>
+    <h3>Largest Over-180-Day Movements</h3><p class="hint">Green = improvement · Red = deterioration</p>
+  </div></div><div class="recv-cust-move-chart">${top.map(r=>`
+    <div class="recv-cust-move-row">
+      <div class="recv-cust-move-name">${esc(r.customer)}</div>
+      <div class="recv-cust-move-track"><i class="${r.movement<0?'improve':'deteriorate'}" style="width:${Math.max(2,Math.abs(r.movement)/max*100)}%"></i></div>
+      <div class="recv-cust-move-value ${customerMovementStatusClass(r.status)}">${fmt(r.movement)}</div>
+    </div>`).join('')}</div></div>`;
+}
+function customerMovementSummary(records){
+  const previous=records.reduce((a,r)=>a+r.previous,0),current=records.reduce((a,r)=>a+r.current,0),
+    movement=current-previous,improved=records.filter(r=>r.status==='Improved'||r.status==='Cleared').length,
+    increased=records.filter(r=>r.status==='Increased'||r.status==='New').length,ccy=currency();
+  return `<div class="grid kpis recv-kpis">
+    ${kpi('Previous >180',ccy+' '+fmt(previous),'DR-Last Period')}
+    ${kpi('Current >180',ccy+' '+fmt(current),'Current ERP aging')}
+    ${kpi('Movement',ccy+' '+fmt(movement),movement<=0?'Improvement':'Deterioration',movement<=0?'pos':'neg')}
+    ${kpi('Improved / Cleared',fmt(improved),'Customer balances')}
+    ${kpi('Increased / New',fmt(increased),'Customer balances',increased?'neg':'')}
+  </div>`;
+}
+function renderCustomerMovement(){
+  const records=over180CustomerMovement();
+  return customerMovementSummary(records)+`<div class="recv-two">${customerMovementTable(records)}${customerMovementChart(records)}</div>`;
+}
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
+function content(){const root=$('recvContent');if(!root)return;const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='customerMovement')root.innerHTML=renderCustomerMovement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=optional('targets');else root.innerHTML=overview(rs,a)}
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
 #view-receivables .recv-summary-table{min-width:1120px}
@@ -854,6 +957,26 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .recv-country-total td{font-weight:800;background:#dce9f8!important;border-top:2px solid #9fb9dc}
 #view-receivables .recv-group-total td{font-weight:900;background:#d1d1d1!important;border-top:3px solid #666}
 #view-receivables .recv-v21-table th,#view-receivables .recv-v21-table td{font-size:.72rem;padding:7px 5px;white-space:normal}
+
+#view-receivables .recv-over180-table{width:100%;table-layout:fixed}
+#view-receivables .recv-over180-table th:nth-child(1){width:4%}
+#view-receivables .recv-over180-table th:nth-child(2){width:27%}
+#view-receivables .recv-over180-table th:nth-child(3){width:10%}
+#view-receivables .recv-over180-table th:nth-child(4){width:15%}
+#view-receivables .recv-over180-table th:nth-child(5),
+#view-receivables .recv-over180-table th:nth-child(6),
+#view-receivables .recv-over180-table th:nth-child(7){width:12%}
+#view-receivables .recv-over180-table th:nth-child(8){width:8%}
+#view-receivables .recv-over180-table td{white-space:normal;overflow-wrap:anywhere}
+#view-receivables .recv-cust-move-chart{padding:4px 0}
+#view-receivables .recv-cust-move-row{display:grid;grid-template-columns:minmax(150px,1.5fr) minmax(140px,2fr) 95px;gap:10px;align-items:center;margin:12px 0}
+#view-receivables .recv-cust-move-name{font-size:.78rem;line-height:1.2;overflow-wrap:anywhere}
+#view-receivables .recv-cust-move-track{height:18px;background:#e8edf3;border-radius:9px;overflow:hidden}
+#view-receivables .recv-cust-move-track i{display:block;height:100%;border-radius:9px}
+#view-receivables .recv-cust-move-track i.improve{background:#55b98a}
+#view-receivables .recv-cust-move-track i.deteriorate{background:#df7a6e}
+#view-receivables .recv-cust-move-value{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+@media(max-width:900px){#view-receivables .recv-cust-move-row{grid-template-columns:minmax(110px,1.2fr) minmax(100px,1.5fr) 75px}}
 `;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
