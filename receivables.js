@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v21.4
+// Receivables Intelligence Module v21.5
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -383,7 +383,7 @@ function aging(a,rs){
 function movementClass(name){
   const n=clean(name).toUpperCase();
   // DR-Movement Details uses short DIV codes, while aging sheets use full names.
-  if(['CONST','CONSTRUCTION','MC','MAST CLIMBER','MAST CLIMBERS','MAST CLIMBING','EV','EVENT','EVENTS'].includes(n))return'EPC';
+  if(['CONST','CONSTRUCTION','MC','MCWP','MAST CLIMBER','MAST CLIMBERS','MAST CLIMBING','EV','EVENT','EVENTS'].includes(n))return'EPC';
   if(['PA','POWERED ACCESS','SS','SITE SERVICE','SITE SERVICES'].includes(n))return'S&R';
   if(['FP','FILM PRODUCTION'].includes(n))return'FP';
   if(['GEN','GENERAL'].includes(n)||n.includes('RELATED PART'))return'GEN';
