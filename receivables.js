@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v23.0
+// Receivables Intelligence Module v23.1
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -9,8 +9,7 @@ const C={entities:[
 {id:'ALU',label:'ALU',currency:'SAR',fx:.975,sheets:['DR-ALU-System']},
 {id:'ALIS',label:'ALIS',currency:'OMR',fx:9.5,sheets:['DR-ALIS-System']},
 {id:'ALICLER',label:'ALICLER',currency:'AED',fx:1,sheets:['DR-ALICLER-System']},
-{id:'ALPS_UZ',label:'ALPS UZ',currency:'AED',fx:1,sheets:['DR-ALPS UZ-System']},
-{id:'ALPS_PE',label:'ALPS PE',currency:'AED',fx:1,sheets:['DR-ALPS-PE-System','DR-ALPS PE-System']}
+{id:'ALPS_UZ',label:'ALPS UZ',currency:'AED',fx:1,sheets:['DR-ALPS UZ-System']}
 ],history:['Receivable History','Receivables History'],targets:['Collection Targets'],actuals:['Collection Actuals'],movement:['Receivable Movement','Receivables Movement']};
 
 const MOVEMENT_CONFIG={
@@ -147,7 +146,7 @@ function aggregate(rs){
 }
 const currency=()=>S.entity==='GROUP'?'AED':cfg(S.entity).currency;
 function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerHTML=C.entities.map(e=>{const ok=e.id==='GROUP'||(S.parsed[e.id]&&S.parsed[e.id].rows.length);return`<button class="recv-pill ${S.entity===e.id?'active':''}" data-e="${e.id}" ${ok?'':'disabled'}>${esc(e.label)}${e.id==='ALU'?' · SAR':e.id==='ALIS'?' · OMR':''}</button>`}).join('');root.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{S.entity=b.dataset.e;render()})}
-function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['customers','Top Customers'],['customerMovement','Over 180 Movement'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
+function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Over 180 Movement'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
 function topTable(rs,field,title){
@@ -905,6 +904,36 @@ function renderOver180Movement(){
   return cards+`<div class="recv-two">${table}${chart}</div>`;
 }
 
+
+function renderAgingDetail(rs){
+  const ccy=currency();
+  const sorted=rs.slice().sort((a,b)=>(b.total||0)-(a.total||0));
+  const head=['Customer','Entity','Division','Total','0–30','31–60','61–90','91–120','121–150','151–180','181–210','211–240','241–270','271–300','301–330','331–365','366–730','>731'];
+  const body=sorted.map(r=>{
+    const f=S.entity==='GROUP'?r.fx:1;
+    const vals=BK.map(k=>(r.buckets[k]||0)*f);
+    const total=(S.entity==='GROUP'?r.totalAED:r.total)||0;
+    return `<tr>
+      <td class="recv-customer-name">${esc(r.customer)}</td>
+      <td>${esc(r.entityLabel||r.entityId||'')}</td>
+      <td>${esc(r.division)}</td>
+      <td class="num">${fmt(total)}</td>
+      ${vals.map(v=>`<td class="num">${fmt(v)}</td>`).join('')}
+    </tr>`;
+  }).join('');
+  return `<div class="card panel recv-panel">
+    <div class="panelhead"><div>
+      <h3>Aging Analysis Detail</h3>
+      <p class="hint">${sorted.length} customer balances · ${esc(ccy)} · all aging brackets</p>
+    </div></div>
+    <div class="recv-table-wrap">
+      <table class="recv-table recv-aging-detail-table">
+        <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${body||'<tr><td colspan="18" class="empty">No aging detail detected.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
 function parseCollectionMonthHeader(value){
   const s=clean(value);
   if(!s)return null;
@@ -1056,13 +1085,13 @@ function collectionKPIs(rows){
     yoy=priorCollected?(collected-priorCollected)/priorCollected*100:0;
 
   return `<div class="grid kpis recv-kpis coll-kpis">
-    ${kpi('Invoiced','AED '+fmt(invoiced),collectionMonthName(m)+' '+y)}
-    ${kpi('Cash Collected','AED '+fmt(collected),collectionMonthName(m)+' '+y)}
-    ${kpi('Target','AED '+fmt(target),'Monthly collection target')}
+    ${kpi('Invoiced',"AED '000 "+fmt(invoiced),collectionMonthName(m)+' '+y)}
+    ${kpi('Cash Collected',"AED '000 "+fmt(collected),collectionMonthName(m)+' '+y)}
+    ${kpi('Target',"AED '000 "+fmt(target),'Monthly collection target')}
     ${kpi('Achievement',pct(achievement),'Collected ÷ Target',collectionAchievementClass(achievement))}
     ${kpi('Collection Ratio',pct(ratio),'Collected ÷ Invoiced',ratio>=100?'pos':'')}
-    ${kpi('Debt Balance','AED '+fmt(debt),'Month-end outstanding')}
-    ${kpi('Target Variance','AED '+fmt(variance),variance>=0?'Above target':'Below target',variance>=0?'pos':'neg')}
+    ${kpi('Debt Balance',"AED '000 "+fmt(debt),'Month-end outstanding')}
+    ${kpi('Target Variance',"AED '000 "+fmt(variance),variance>=0?'Above target':'Below target',variance>=0?'pos':'neg')}
     ${kpi('YoY Collection Growth',pct(yoy),collectionMonthName(m)+' '+py+' comparison',yoy>=0?'pos':'neg')}
   </div>`;
 }
@@ -1081,10 +1110,10 @@ function collectionExecutive(rows){
     ytdRatio=ytdInvoiced?ytdCollected/ytdInvoiced*100:0;
 
   return `<div class="card panel recv-panel coll-exec">
-    <div class="panelhead"><div><h3>Executive Summary</h3><p class="hint">Collection performance · all figures in AED</p></div></div>
-    <p>Collections for <strong>${collectionMonthName(m)} ${y}</strong> were <strong>AED ${fmt(collected)}</strong> against a target of <strong>AED ${fmt(target)}</strong>, achieving <strong>${pct(achievement)}</strong>. The result was <strong>AED ${fmt(Math.abs(targetVariance))}</strong> ${targetVariance>=0?'above':'below'} target.</p>
-    <p>Monthly collections were ${yoy>=0?'higher':'lower'} than ${collectionMonthName(m)} ${py} by <strong>${pct(Math.abs(yoy))}</strong>. Year-to-date collections reached <strong>AED ${fmt(ytdCollected)}</strong>, achieving <strong>${pct(ytdAchievement)}</strong> of YTD target and ${ytdYoy>=0?'increasing':'decreasing'} by <strong>${pct(Math.abs(ytdYoy))}</strong> compared with the same period last year.</p>
-    <p>Current-month invoicing was <strong>AED ${fmt(invoiced)}</strong>, the month-end debt balance was <strong>AED ${fmt(debt)}</strong>, and YTD collections represented <strong>${pct(ytdRatio)}</strong> of YTD invoicing.</p>
+    <div class="panelhead"><div><h3>Executive Summary</h3><p class="hint">Collection performance · all figures in AED '000</p></div></div>
+    <p>Collections for <strong>${collectionMonthName(m)} ${y}</strong> were <strong>AED '000 ${fmt(collected)}</strong> against a target of <strong>AED '000 ${fmt(target)}</strong>, achieving <strong>${pct(achievement)}</strong>. The result was <strong>AED '000 ${fmt(Math.abs(targetVariance))}</strong> ${targetVariance>=0?'above':'below'} target.</p>
+    <p>Monthly collections were ${yoy>=0?'higher':'lower'} than ${collectionMonthName(m)} ${py} by <strong>${pct(Math.abs(yoy))}</strong>. Year-to-date collections reached <strong>AED '000 ${fmt(ytdCollected)}</strong>, achieving <strong>${pct(ytdAchievement)}</strong> of YTD target and ${ytdYoy>=0?'increasing':'decreasing'} by <strong>${pct(Math.abs(ytdYoy))}</strong> compared with the same period last year.</p>
+    <p>Current-month invoicing was <strong>AED '000 ${fmt(invoiced)}</strong>, the month-end debt balance was <strong>AED '000 ${fmt(debt)}</strong>, and YTD collections represented <strong>${pct(ytdRatio)}</strong> of YTD invoicing.</p>
   </div>`;
 }
 function collectionTrend(rows){
@@ -1100,7 +1129,7 @@ function collectionTrend(rows){
   }
   const max=Math.max(1,...months.flatMap(x=>[x.invoiced,x.collected,x.target]));
   return `<div class="card panel recv-panel">
-    <div class="panelhead"><div><h3>${y} Monthly Trend</h3><p class="hint">Invoiced, cash collected and target · AED</p></div></div>
+    <div class="panelhead"><div><h3>${y} Monthly Trend</h3><p class="hint">Invoiced, cash collected and target · AED '000</p></div></div>
     <div class="coll-trend">${months.map(x=>`<div class="coll-month ${x.label===collectionMonthName(through)?'active':''}">
       <div class="coll-month-bars">
         <i class="invoice" title="Invoiced ${fmt(x.invoiced)}" style="height:${Math.max(2,x.invoiced/max*100)}%"></i>
@@ -1140,18 +1169,75 @@ function collectionComparisonTable(rows,mode){
     }).join('')}</tbody></table>
   </div>`;
 }
+
+function collectionGroupRows(rows,field){
+  const y=Number(S.collection.year),m=Number(S.collection.month),groups={};
+  rows.forEach(r=>{
+    const key=clean(r[field])||'Unassigned';
+    if(!groups[key])groups[key]={label:key,invoiced:0,collected:0,target:0,debt:0};
+    const g=groups[key];
+    const monthKey=y+'-'+String(m).padStart(2,'0');
+    const v=r.values[monthKey]||0;
+    if(r.description==='INVOICED')g.invoiced+=v;
+    else if(r.description==='COLLECTED')g.collected+=v;
+    else if(r.description==='TARGET')g.target+=v;
+    else if(r.description==='DEBT')g.debt+=v;
+  });
+  return Object.values(groups).map(g=>{
+    g.variance=g.collected-g.target;
+    g.achievement=g.target?g.collected/g.target*100:0;
+    return g;
+  });
+}
+function collectionDetailTable(title,items){
+  const body=items.sort((a,b)=>b.target-a.target).map(g=>`<tr>
+    <td>${esc(g.label)}</td>
+    <td class="num">${fmt(g.target)}</td>
+    <td class="num">${fmt(g.collected)}</td>
+    <td class="num ${g.variance>=0?'recv-good':'recv-bad'}">${fmt(g.variance)}</td>
+    <td class="num ${collectionAchievementClass(g.achievement)}">${pct(g.achievement)}</td>
+    <td class="num">${fmt(g.invoiced)}</td>
+    <td class="num">${fmt(g.debt)}</td>
+  </tr>`).join('');
+  const total=items.reduce((a,g)=>({
+    target:a.target+g.target,collected:a.collected+g.collected,variance:a.variance+g.variance,
+    invoiced:a.invoiced+g.invoiced,debt:a.debt+g.debt
+  }),{target:0,collected:0,variance:0,invoiced:0,debt:0});
+  const ach=total.target?total.collected/total.target*100:0;
+  return `<div class="card panel recv-panel">
+    <div class="panelhead"><div><h3>${esc(title)}</h3>
+      <p class="hint">Selected month · AED '000</p></div></div>
+    <div class="recv-table-wrap"><table class="recv-table coll-detail-table">
+      <thead><tr><th>Category</th><th>Target</th><th>Collection</th><th>Short / Excess</th><th>Achievement</th><th>Invoiced</th><th>Debt</th></tr></thead>
+      <tbody>${body}
+        <tr class="recv-summary-total"><td>Group Total</td><td class="num">${fmt(total.target)}</td><td class="num">${fmt(total.collected)}</td>
+        <td class="num ${total.variance>=0?'recv-good':'recv-bad'}">${fmt(total.variance)}</td>
+        <td class="num">${pct(ach)}</td><td class="num">${fmt(total.invoiced)}</td><td class="num">${fmt(total.debt)}</td></tr>
+      </tbody>
+    </table></div>
+  </div>`;
+}
+function collectionSelectedMonthDetail(rows){
+  const byProfit=collectionGroupRows(rows,'profitCentre');
+  const byDivision=collectionGroupRows(rows,'division');
+  const byCountry=collectionGroupRows(rows,'country');
+  return `<div class="recv-two">
+    ${collectionDetailTable('Selected Month by Profit Centre',byProfit)}
+    ${collectionDetailTable('Selected Month by Division',byDivision)}
+  </div>${collectionDetailTable('Selected Month by Country',byCountry)}`;
+}
 function renderCollectionsPerformance(){
   const data=parseCollectionSheet();
   if(data.error)return`<div class="card panel recv-panel"><div class="empty">Collection Performance requires the <strong>Coll vs Target</strong> sheet. ${esc(data.error)}.</div></div>`;
   ensureCollectionSelection(data);
   const rows=collectionRows(data);
-  const html=collectionFilters(data)+collectionKPIs(rows)+collectionExecutive(rows)+collectionTrend(rows)+
+  const html=collectionFilters(data)+collectionKPIs(rows)+collectionExecutive(rows)+collectionSelectedMonthDetail(rows)+collectionTrend(rows)+
     `<div class="recv-two">${collectionComparisonTable(rows,'month')}${collectionComparisonTable(rows,'ytd')}</div>`;
   setTimeout(bindCollectionFilters,0);
   return html;
 }
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a)}
+function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a)}
 catch(err){
   console.error('Receivables render error',err);
   root.innerHTML='<div class="card panel recv-panel"><div class="empty"><strong>Receivables rendering error:</strong> '+esc(err&&err.message?err.message:String(err))+'</div></div>';
@@ -1234,6 +1320,12 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .coll-compare th,#view-receivables .coll-compare td{white-space:normal}
 @media(max-width:1100px){#view-receivables .coll-filter-grid{grid-template-columns:repeat(3,1fr)}#view-receivables .coll-kpis{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:700px){#view-receivables .coll-filter-grid{grid-template-columns:1fr 1fr}#view-receivables .coll-trend{gap:3px}#view-receivables .coll-month-bars{gap:1px}}
+
+#view-receivables .recv-aging-detail-table{min-width:1750px;font-size:.74rem}
+#view-receivables .recv-aging-detail-table th,#view-receivables .recv-aging-detail-table td{padding:6px 7px}
+#view-receivables .recv-aging-detail-table .recv-customer-name{min-width:260px}
+#view-receivables .coll-detail-table{min-width:760px}
+#view-receivables .coll-detail-table .recv-summary-total td{font-weight:900;background:#d8d8d8!important;border-top:2px solid #666}
 `;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
