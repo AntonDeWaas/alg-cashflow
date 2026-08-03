@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v23.3
+// Receivables Intelligence Module v24.0
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -146,7 +146,23 @@ function aggregate(rs){
 }
 const currency=()=>S.entity==='GROUP'?'AED':cfg(S.entity).currency;
 function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerHTML=C.entities.map(e=>{const ok=e.id==='GROUP'||(S.parsed[e.id]&&S.parsed[e.id].rows.length);return`<button class="recv-pill ${S.entity===e.id?'active':''}" data-e="${e.id}" ${ok?'':'disabled'}>${esc(e.label)}${e.id==='ALU'?' · SAR':e.id==='ALIS'?' · OMR':''}</button>`}).join('');root.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{S.entity=b.dataset.e;render()})}
-function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Over 180 Movement'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
+function sectionTabs(){
+  const root=$('recvSectionTabs');if(!root)return;
+  const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Over 180 Movement'],['movement','Movement Analysis'],['collections','Collections Performance']];
+  root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');
+  root.querySelectorAll('[data-s]').forEach(b=>b.onclick=async()=>{
+    S.section=b.dataset.s;sectionTabs();
+    if(S.section==='collections'&&!matrix('Coll vs Target').length&&typeof window.loadGoogleSheetScope==='function'){
+      const c=$('recvContent');if(c)c.innerHTML='<div class="empty">Loading Collection Performance…</div>';
+      try{
+        await window.loadGoogleSheetScope('collections',{force:false});
+        applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+      }catch(e){
+        if(c)c.innerHTML='<div class="empty">Could not load Collection Performance: '+esc(e.message)+'</div>';
+      }
+    }else content();
+  });
+}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
 function topTable(rs,field,title){
@@ -1407,7 +1423,7 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 `;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
-function jsonp(url){return new Promise((res,rej)=>{const cb='recvJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2),sc=document.createElement('script'),sep=url.includes('?')?'&':'?',tm=setTimeout(()=>{done();rej(new Error('Receivables request timed out.'))},120000);function done(){clearTimeout(tm);try{delete window[cb]}catch(_){window[cb]=undefined}if(sc.parentNode)sc.parentNode.removeChild(sc)}window[cb]=d=>{done();res(d)};sc.onerror=()=>{done();rej(new Error('Could not load Google Sheet endpoint.'))};sc.src=url+sep+'callback='+encodeURIComponent(cb)+'&t='+Date.now();document.body.appendChild(sc)})}
+function jsonp(url){return new Promise((res,rej)=>{const cb='recvJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2),sc=document.createElement('script'),sep=url.includes('?')?'&':'?',tm=setTimeout(()=>{done();rej(new Error('Receivables request timed out after 60 seconds.'))},60000);function done(){clearTimeout(tm);try{delete window[cb]}catch(_){window[cb]=undefined}if(sc.parentNode)sc.parentNode.removeChild(sc)}window[cb]=d=>{done();res(d)};sc.onerror=()=>{done();rej(new Error('Could not load Google Sheet endpoint.'))};sc.src=url+sep+'callback='+encodeURIComponent(cb)+'&t='+Date.now();document.body.appendChild(sc)})}
 function applyPayload(payload){
   if(!payload||typeof payload!=='object')return false;
   S.payload=payload;
@@ -1417,27 +1433,24 @@ function applyPayload(payload){
   return true;
 }
 async function refresh(o){
-  o=o||{};
-  ui();
+  o=o||{};ui();
   const root=$('recvContent');
-
-  // Reuse the payload already loaded successfully by app.js.
-  // This avoids a second very large JSONP request for all DR sheets.
-  if(applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD))return;
-
-  if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing receivables…</div>';
-  const url=api();
-  if(!url){
-    root.innerHTML='<div class="empty">Google Apps Script URL is not configured.</div>';
-    return;
-  }
-
+  if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing Receivables…</div>';
   try{
-    const payload=await jsonp(url);
+    if(typeof window.loadGoogleSheetScope==='function'){
+      await window.loadGoogleSheetScope('receivables',{force:!o.silent});
+      if(S.section==='collections')await window.loadGoogleSheetScope('collections',{force:!o.silent});
+      applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+      return;
+    }
+    const url=api();
+    if(!url)throw new Error('Google Apps Script URL is not configured.');
+    const sep=url.includes('?')?'&':'?';
+    const payload=await jsonp(url+sep+'scope=receivables');
     window.GOOGLE_SHEET_RAW_PAYLOAD=payload;
     applyPayload(payload);
   }catch(e){
-    root.innerHTML='<div class="empty">Could not load receivables: '+esc(e.message)+'. Click the main Refresh Google Sheet button first.</div>';
+    if(root)root.innerHTML='<div class="empty">Could not load receivables: '+esc(e.message)+'</div>';
   }
 }
 function wrap(){
@@ -1453,30 +1466,17 @@ function wrap(){
 }
 function boot(){
   ui();
-
-  // Receive the exact payload loaded by app.js.
   window.addEventListener('googleSheetPayloadReady',function(e){
-    applyPayload(e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD);
+    const p=e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD;
+    if(p&&p.sheets)applyPayload(p);
   });
-
-  const t=setInterval(()=>{
-    ui();
-    wrap();
-    if(window.GOOGLE_SHEET_RAW_PAYLOAD){
-      applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
-      clearInterval(t);
-    }
-  },250);
-
-  setTimeout(()=>clearInterval(t),15000);
-
-  // Do not start a competing full API request during page load.
   setTimeout(()=>{
-    if(!window.GOOGLE_SHEET_RAW_PAYLOAD){
-      const root=$('recvContent');
-      if(root)root.innerHTML='<div class="empty">Click <strong>Refresh Google Sheet</strong> to load Receivables Intelligence.</div>';
+    if(typeof window.loadGoogleSheetScope==='function'){
+      refresh({silent:true});
+    }else if(window.GOOGLE_SHEET_RAW_PAYLOAD){
+      applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
     }
-  },1200);
+  },500);
 }
 window.RECEIVABLES_INTELLIGENCE={refresh,render,state:S,config:C,applyPayload};
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
