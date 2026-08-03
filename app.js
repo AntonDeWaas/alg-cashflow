@@ -1,3 +1,4 @@
+// ALG Cash Flow Dashboard v24.0 - scoped Google Sheet API
 var DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
 var SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB','Bank Balance'];
 var DASHBOARD_DATA = null;
@@ -1406,6 +1407,45 @@ const qiddiyaCash = qiddiyaCashByDate !== null ? qiddiyaCashByDate : (Number(las
 }
 
 
+
+/* ---------------- Google Sheet API v24: scoped loading ---------------- */
+window.GOOGLE_SHEET_SCOPE_CACHE = window.GOOGLE_SHEET_SCOPE_CACHE || {};
+window.GOOGLE_SHEET_RAW_PAYLOAD = window.GOOGLE_SHEET_RAW_PAYLOAD || {version:'V24.0',sheets:{}};
+
+function googleScopeUrl(url, scope){
+  const sep=url.includes('?')?'&':'?';
+  return url+sep+'scope='+encodeURIComponent(scope||'core');
+}
+function mergeGoogleSheetPayload(base, incoming){
+  const out=base&&typeof base==='object'?base:{sheets:{}};
+  if(!out.sheets) out.sheets={};
+  const src=(incoming&&incoming.sheets)||{};
+  Object.keys(src).forEach(k=>{ out.sheets[k]=src[k]; });
+  if(incoming&&incoming.version) out.version=incoming.version;
+  if(incoming&&incoming.lastUpdated) out.lastUpdated=incoming.lastUpdated;
+  if(incoming&&incoming.scope) out.scope=incoming.scope;
+  return out;
+}
+async function loadGoogleSheetScope(scope, options){
+  options=options||{};
+  const url=getGoogleSheetUrlInput();
+  if(!url) throw new Error('Google Apps Script URL is not configured.');
+
+  const cache=window.GOOGLE_SHEET_SCOPE_CACHE;
+  if(!options.force && cache[scope]){
+    window.GOOGLE_SHEET_RAW_PAYLOAD=mergeGoogleSheetPayload(window.GOOGLE_SHEET_RAW_PAYLOAD,cache[scope]);
+    window.dispatchEvent(new CustomEvent('googleSheetPayloadReady',{detail:window.GOOGLE_SHEET_RAW_PAYLOAD}));
+    return cache[scope];
+  }
+
+  const payload=await loadJsonp(googleScopeUrl(url,scope));
+  cache[scope]=payload;
+  window.GOOGLE_SHEET_RAW_PAYLOAD=mergeGoogleSheetPayload(window.GOOGLE_SHEET_RAW_PAYLOAD,payload);
+  window.dispatchEvent(new CustomEvent('googleSheetPayloadReady',{detail:window.GOOGLE_SHEET_RAW_PAYLOAD}));
+  return payload;
+}
+window.loadGoogleSheetScope=loadGoogleSheetScope;
+
 function normalizeGooglePayload(json){
   if(json.entities&&json.group) return json;
   const sheets=json.sheets||json; const entities=[];
@@ -1436,7 +1476,7 @@ function loadJsonp(url){
     const cb='cfJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2);
     const sep=url.includes('?')?'&':'?';
     const script=document.createElement('script');
-    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out after 120 seconds')); },120000);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out after 60 seconds')); },60000);
     function cleanup(){ clearTimeout(timer); delete window[cb]; if(script.parentNode) script.parentNode.removeChild(script); }
     window[cb]=(data)=>{ cleanup(); resolve(data); };
     script.onerror=()=>{ cleanup(); reject(new Error('Could not load Google Sheet API. Check Apps Script deployment and URL.')); };
@@ -1445,30 +1485,26 @@ function loadJsonp(url){
   });
 }
 async function refreshFromGoogleSheet(){
-  const url=getGoogleSheetUrlInput(); if(!url){alert('Please paste the Google Apps Script API URL first.');return;}
-  saveGoogleSheetUrl(); setGoogleNotes('Refreshing from Google Sheet...');
+  const url=getGoogleSheetUrlInput();
+  if(!url){alert('Please paste the Google Apps Script API URL first.');return;}
+  saveGoogleSheetUrl();
+  setGoogleNotes('Refreshing core dashboard data...');
   try{
-    const json=await loadJsonp(url);
-
-    // Share the original Google Sheet response with feature modules.
-    // Receivables Intelligence uses this payload instead of downloading
-    // the same large DR dataset a second time.
-    window.GOOGLE_SHEET_RAW_PAYLOAD = json;
-    window.dispatchEvent(new CustomEvent('googleSheetPayloadReady', {
-      detail: json
-    }));
-
+    const json=await loadGoogleSheetScope('core',{force:true});
     const normalized=normalizeGooglePayload(json);
     Object.assign(FORECAST_DATA, normalized);
     DASHBOARD_DATA = normalized.dashboardData || null;
     QIDDIYA_DATA = normalized.qiddiyaData || null;
     window.BANK_BALANCE_DATA = normalized.bankBalanceData || [];
     if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)) currentForecastSheet='GROUP';
-    setGoogleNotes('Updated from Google Sheet at '+new Date().toLocaleString());
+    setGoogleNotes('Core dashboard updated at '+new Date().toLocaleString());
     refreshAll();
-    alert('Google Sheet data loaded successfully.');
+    alert('Google Sheet core data loaded successfully.');
   }
-  catch(e){ setGoogleNotes('Refresh failed: '+e.message); alert('Could not refresh from Google Sheet: '+e.message); }
+  catch(e){
+    setGoogleNotes('Refresh failed: '+e.message);
+    alert('Could not refresh from Google Sheet: '+e.message);
+  }
 }
 function handleExcelImport(e){ alert('Excel import button is ready in the UI. For reliable live updates from GitHub, use the Google Apps Script JSON connection so the hosted HTML can refresh from your Google Sheet.'); e.target.value=''; }
 
