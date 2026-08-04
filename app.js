@@ -1969,8 +1969,6 @@ async function refreshFromGoogleSheet(){
     {scope:'summary-capex',label:'capex summary'},
     {scope:'summary-collection-targets',label:'collection targets'},
     {scope:'summary-collection-actuals',label:'collection actuals'},
-    {scope:'summary-receivable-history',label:'receivable history'},
-    {scope:'summary-receivable-movement',label:'receivable movement'},
     {scope:'forecast-alps',label:'ALPS forecast'},
     {scope:'forecast-alicler',label:'ALICLER forecast'},
     {scope:'forecast-ss',label:'Site Services forecast'},
