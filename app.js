@@ -1748,7 +1748,7 @@ function renderGoogleProgress(){
         '• '+String(item.label||item.scope||item)
       ).join('<br>');
   }else{
-    details.innerHTML='<strong>No optional warnings.</strong>';
+    details.innerHTML='<strong>No optional warnings.</strong><br>Parallel refresh limit: 4 requests.';
   }
 }
 
@@ -1825,80 +1825,41 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const firstPassFailures=[];
-  const workingPayload={version:'FIP-6.2.9',sheets:{}};
+  const workingPayload={version:'FIP-6.3.1',sheets:{}};
+  const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
+  let nextIndex=0;
+  let finishedCount=0;
 
-  // First pass: slower pacing to reduce Apps Script throttling.
-  for(let i=0;i<optionalBatches.length;i+=1){
-    const batch=optionalBatches[i];
-    const optionalLabel=
+  async function processBatch(batch,index){
+    const runningLabel=
       'Updating '+batch.label+
-      ' ('+(i+1)+'/'+optionalBatches.length+' optional)…';
-    setGoogleNotes('Core data loaded. '+optionalLabel);
-    setGoogleProgressCurrent(optionalLabel);
-
-    // Longer recovery gap between Apps Script executions.
-    await googleDelay(i===0?5000:4200);
+      ' ('+(finishedCount+1)+'/'+optionalBatches.length+' optional)…';
+    setGoogleProgressCurrent(runningLabel);
+    setGoogleNotes('Core data loaded. '+runningLabel);
 
     try{
       const payload=await loadGoogleBatchWithRetry(batch,{
         attempts:2,
-        timeoutMs:150000,
-        retryTimeoutMs:210000,
-        retryDelayMs:7000
-      });
-
-      mergeGoogleSheetPayload(workingPayload,payload);
-      completed.push(batch.scope);
-
-      applyGoogleWorkingPayload(workingPayload,completed,failures,'optional');
-      workingPayload.sheets={};
-      advanceGoogleProgress(batch.label+' updated',false);
-    }catch(error){
-      firstPassFailures.push({
-        batch:batch,
-        message:error&&error.message?error.message:String(error)
-      });
-      console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE_FIRST_PASS]',batch.scope,error);
-    }
-  }
-
-  // Cooldown before retrying only failed optional scopes.
-  if(firstPassFailures.length){
-    setGoogleNotes(
-      'Core data is available. Waiting before retrying '+
-      firstPassFailures.length+' optional data source(s)…'
-    );
-    await googleDelay(15000);
-  }
-
-  for(let i=0;i<firstPassFailures.length;i+=1){
-    const item=firstPassFailures[i];
-    const batch=item.batch;
-
-    const retryLabel=
-      'Retrying '+batch.label+
-      ' ('+(i+1)+'/'+firstPassFailures.length+' retry)…';
-    setGoogleNotes(retryLabel);
-    setGoogleProgressCurrent(retryLabel);
-
-    // Extra spacing between second-pass retries.
-    if(i>0) await googleDelay(8000);
-
-    try{
-      const payload=await loadGoogleBatchWithRetry(batch,{
-        attempts:2,
-        timeoutMs:180000,
-        retryTimeoutMs:240000,
-        retryDelayMs:10000
+        timeoutMs:90000,
+        retryTimeoutMs:150000,
+        retryDelayMs:2500
       });
 
       mergeGoogleSheetPayload(workingPayload,payload);
       if(!completed.includes(batch.scope))completed.push(batch.scope);
 
-      applyGoogleWorkingPayload(workingPayload,completed,failures,'optional-retry');
+      // Apply each completed scope immediately so its module can update.
+      applyGoogleWorkingPayload(
+        workingPayload,
+        completed,
+        failures,
+        'optional-parallel'
+      );
       workingPayload.sheets={};
-      advanceGoogleProgress(batch.label+' updated after retry',false);
+
+      finishedCount+=1;
+      advanceGoogleProgress(batch.label+' updated',false);
+      return;
     }catch(error){
       failures.push({
         scope:batch.scope,
@@ -1907,9 +1868,27 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
         message:error&&error.message?error.message:String(error)
       });
       console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE_FINAL]',batch.scope,error);
-      advanceGoogleProgress(batch.label+' retained from existing data',true);
+
+      finishedCount+=1;
+      advanceGoogleProgress(
+        batch.label+' retained from existing data',
+        true
+      );
     }
   }
+
+  async function worker(){
+    while(true){
+      const index=nextIndex;
+      nextIndex+=1;
+      if(index>=optionalBatches.length)return;
+      await processBatch(optionalBatches[index],index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({length:concurrency},()=>worker())
+  );
 
   const stamp=new Date().toLocaleString();
   localStorage.setItem('cf_google_last_refresh',stamp);
@@ -1920,7 +1899,7 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
     const names=failures.map(x=>x.label).join(', ');
     setGoogleNotes(
       'Core data updated at '+stamp+
-      '. Optional data not refreshed after retry: '+names+
+      '. Optional data not refreshed: '+names+
       '. Existing values were retained.'
     );
   }else{
@@ -1974,7 +1953,7 @@ async function refreshFromGoogleSheet(){
     {scope:'forecast-ss',label:'Site Services forecast'},
     {scope:'forecast-ksa',label:'KSA forecast'},
     {scope:'forecast-oman',label:'Oman forecast'},
-    {scope:'forecast-alps-rak', label:'ALPS RAK Branch forecast'},
+    {scope:'forecast-alps-rak',label:'ALPS RAK Branch forecast'},
     {scope:'forecast-uzbekistan',label:'Uzbekistan forecast'}
   ];
 
@@ -1987,37 +1966,39 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.2.9',sheets:{}};
+    const corePayload={version:'FIP-6.3.1',sheets:{}};
 
     try{
-      setGoogleNotes('Refreshing dashboard summary (1/2)…');
-      setGoogleProgressCurrent('Refreshing dashboard summary (1/2)…');
-      const summaryPayload=await loadGoogleBatchWithRetry(coreBatches[0],{
-        attempts:3,
-        timeoutMs:180000,
-        retryTimeoutMs:240000,
-        retryDelayMs:4000
-      });
-      mergeGoogleSheetPayload(corePayload,summaryPayload);
+      setGoogleNotes('Refreshing core dashboard and group forecast…');
+      setGoogleProgressCurrent(
+        'Refreshing core dashboard and group forecast…'
+      );
+
+      const coreResults=await Promise.all([
+        loadGoogleBatchWithRetry(coreBatches[0],{
+          attempts:2,
+          timeoutMs:120000,
+          retryTimeoutMs:180000,
+          retryDelayMs:2500
+        }),
+        loadGoogleBatchWithRetry(coreBatches[1],{
+          attempts:2,
+          timeoutMs:120000,
+          retryTimeoutMs:180000,
+          retryDelayMs:2500
+        })
+      ]);
+
+      mergeGoogleSheetPayload(corePayload,coreResults[0]);
       completed.push('summary-main');
       advanceGoogleProgress('Dashboard summary updated',false);
 
-      // Give Apps Script a short recovery period before the heavy group forecast.
-      setGoogleNotes('Dashboard summary loaded. Preparing group forecast…');
-      await googleDelay(3500);
-
-      setGoogleNotes('Refreshing group forecast (2/2)…');
-      setGoogleProgressCurrent('Refreshing group forecast (2/2)…');
-      const forecastPayload=await loadGoogleBatchWithRetry(coreBatches[1],{
-        attempts:3,
-        timeoutMs:180000,
-        retryTimeoutMs:240000,
-        retryDelayMs:5000
-      });
-      mergeGoogleSheetPayload(corePayload,forecastPayload);
+      mergeGoogleSheetPayload(corePayload,coreResults[1]);
       completed.push('forecast-alg');
-      advanceGoogleProgress('Core data loaded; optional updates starting…',false);
-
+      advanceGoogleProgress(
+        'Core data loaded; parallel updates starting…',
+        false
+      );
       applyGoogleWorkingPayload(corePayload,completed,failures,'core');
 
       const coreStamp=new Date().toLocaleString();
@@ -2040,7 +2021,7 @@ async function refreshFromGoogleSheet(){
       const toast=document.createElement('div');
       toast.className='fip-refresh-toast';
       toast.textContent=
-        'Core dashboard updated. Optional summaries and forecasts are continuing in the background.';
+        'Core dashboard updated. Remaining data sources are refreshing in parallel.';
       document.body.appendChild(toast);
       window.setTimeout(()=>toast.remove(),7000);
 
