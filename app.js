@@ -1577,7 +1577,10 @@ const googleProgressState={
   completed:0,
   failed:0,
   current:'',
-  startedAt:0
+  startedAt:0,
+  finishedAt:0,
+  warnings:[],
+  elapsedSeconds:0
 };
 
 function googleRefreshButtons(){
@@ -1644,6 +1647,24 @@ function ensureGoogleProgressUI(){
     #googleSheetRefreshProgress.is-error .gs-progress-fill{
       background:#c0392b
     }
+    #googleSheetRefreshProgress .gs-progress-actions{
+      display:flex;justify-content:flex-end;gap:8px;margin-top:10px
+    }
+    #googleSheetRefreshProgress .gs-progress-actions button{
+      border:1px solid #cfc8bd;background:#fff;border-radius:7px;
+      padding:6px 10px;font-size:11px;font-weight:800;cursor:pointer
+    }
+    #googleSheetRefreshProgress .gs-progress-details{
+      margin-top:9px;padding:9px 10px;border-radius:8px;
+      background:#f7f9fc;border:1px solid #e3e8ef;
+      font-size:11px;line-height:1.5;max-height:150px;overflow:auto
+    }
+    .fip-refresh-toast{
+      position:fixed;right:18px;top:18px;z-index:100001;
+      width:min(420px,calc(100vw - 36px));background:#143b68;color:#fff;
+      border-radius:10px;padding:12px 14px;box-shadow:0 12px 30px rgba(0,0,0,.22);
+      font-size:13px;font-weight:700
+    }
   `;
   document.head.appendChild(style);
 
@@ -1663,7 +1684,22 @@ function ensureGoogleProgressUI(){
       <span class="gs-progress-count">0 of 0 data sources</span>
       <span class="gs-progress-time">Starting…</span>
     </div>
+    <div class="gs-progress-actions" hidden>
+      <button type="button" data-google-progress-details>View details</button>
+      <button type="button" data-google-progress-dismiss>Dismiss</button>
+    </div>
+    <div class="gs-progress-details" hidden></div>
   `;
+  wrap.querySelector('[data-google-progress-dismiss]').addEventListener('click',()=>{
+    googleProgressState.active=false;
+    renderGoogleProgress();
+  });
+  wrap.querySelector('[data-google-progress-details]').addEventListener('click',()=>{
+    const details=wrap.querySelector('.gs-progress-details');
+    const button=wrap.querySelector('[data-google-progress-details]');
+    details.hidden=!details.hidden;
+    button.textContent=details.hidden?'View details':'Hide details';
+  });
   document.body.appendChild(wrap);
   return wrap;
 }
@@ -1675,11 +1711,16 @@ function renderGoogleProgress(){
     100,
     Math.round((googleProgressState.completed/total)*100)
   );
-  const elapsed=googleProgressState.startedAt
-    ? Math.max(0,Math.round((Date.now()-googleProgressState.startedAt)/1000))
-    : 0;
+  const elapsed=googleProgressState.finishedAt
+    ? googleProgressState.elapsedSeconds
+    : (googleProgressState.startedAt
+      ? Math.max(0,Math.round((Date.now()-googleProgressState.startedAt)/1000))
+      : 0);
 
-  wrap.classList.toggle('is-visible',googleProgressState.active);
+  wrap.classList.toggle(
+    'is-visible',
+    googleProgressState.active||googleProgressState.finishedAt>0
+  );
   wrap.querySelector('.gs-progress-title').textContent=
     googleProgressState.current||'Refreshing Google Sheet…';
   wrap.querySelector('.gs-progress-percent').textContent=percent+'%';
@@ -1694,6 +1735,21 @@ function renderGoogleProgress(){
     elapsed<60
       ? elapsed+' sec elapsed'
       : Math.floor(elapsed/60)+'m '+(elapsed%60)+'s elapsed';
+
+  const actions=wrap.querySelector('.gs-progress-actions');
+  const details=wrap.querySelector('.gs-progress-details');
+  const finished=!googleProgressState.active&&googleProgressState.finishedAt>0;
+  actions.hidden=!finished;
+
+  if(googleProgressState.warnings.length){
+    details.innerHTML=
+      '<strong>Optional warnings</strong><br>'+
+      googleProgressState.warnings.map(item=>
+        '• '+String(item.label||item.scope||item)
+      ).join('<br>');
+  }else{
+    details.innerHTML='<strong>No optional warnings.</strong>';
+  }
 }
 
 function beginGoogleProgress(total,label){
@@ -1703,6 +1759,9 @@ function beginGoogleProgress(total,label){
   googleProgressState.failed=0;
   googleProgressState.current=label||'Starting Google Sheet refresh…';
   googleProgressState.startedAt=Date.now();
+  googleProgressState.finishedAt=0;
+  googleProgressState.elapsedSeconds=0;
+  googleProgressState.warnings=[];
   const wrap=ensureGoogleProgressUI();
   wrap.classList.remove('is-warning','is-error');
   setGoogleRefreshButtonsBusy(true);
@@ -1726,19 +1785,29 @@ function advanceGoogleProgress(label,failed){
   renderGoogleProgress();
 }
 
-function finishGoogleProgress(message,error){
+function finishGoogleProgress(message,error,warnings){
   googleProgressState.completed=googleProgressState.total;
   googleProgressState.current=message||
     (error?'Google Sheet refresh failed.':'Google Sheet refresh complete.');
+  googleProgressState.finishedAt=Date.now();
+  googleProgressState.elapsedSeconds=googleProgressState.startedAt
+    ? Math.max(0,Math.round(
+        (googleProgressState.finishedAt-googleProgressState.startedAt)/1000
+      ))
+    : 0;
+  googleProgressState.warnings=Array.isArray(warnings)?warnings.slice():[];
+  googleProgressState.failed=googleProgressState.warnings.length;
+  googleProgressState.active=false;
+
   const wrap=ensureGoogleProgressUI();
+  wrap.classList.add('is-visible');
   wrap.classList.toggle('is-error',Boolean(error));
+  wrap.classList.toggle(
+    'is-warning',
+    !error&&googleProgressState.warnings.length>0
+  );
   renderGoogleProgress();
   setGoogleRefreshButtonsBusy(false);
-
-  window.setTimeout(()=>{
-    googleProgressState.active=false;
-    renderGoogleProgress();
-  },error?12000:6000);
 }
 
 window.getGoogleRefreshProgress=function(){
@@ -1747,13 +1816,17 @@ window.getGoogleRefreshProgress=function(){
       ? Math.round(
           (googleProgressState.completed/googleProgressState.total)*100
         )
-      : 0
+      : 0,
+    elapsed:googleProgressState.elapsedSeconds<60
+      ? googleProgressState.elapsedSeconds+' sec'
+      : Math.floor(googleProgressState.elapsedSeconds/60)+'m '+
+        (googleProgressState.elapsedSeconds%60)+'s'
   });
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
   const firstPassFailures=[];
-  const workingPayload={version:'FIP-6.2.8',sheets:{}};
+  const workingPayload={version:'FIP-6.2.9',sheets:{}};
 
   // First pass: slower pacing to reduce Apps Script throttling.
   for(let i=0;i<optionalBatches.length;i+=1){
@@ -1858,7 +1931,8 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
     failures.length
       ? 'Refresh complete with '+failures.length+' optional warning(s).'
       : 'All Google Sheet data updated successfully.',
-    false
+    false,
+    failures
   );
 
   window.dispatchEvent(new CustomEvent('fip:data-ready',{
@@ -1915,7 +1989,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.2.8',sheets:{}};
+    const corePayload={version:'FIP-6.2.9',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing dashboard summary (1/2)…');
@@ -1965,10 +2039,12 @@ async function refreshFromGoogleSheet(){
         });
       }
 
-      alert(
-        'Core Google Sheet data loaded successfully. '+
-        'Optional summaries and entity forecasts will continue refreshing in the background.'
-      );
+      const toast=document.createElement('div');
+      toast.className='fip-refresh-toast';
+      toast.textContent=
+        'Core dashboard updated. Optional summaries and forecasts are continuing in the background.';
+      document.body.appendChild(toast);
+      window.setTimeout(()=>toast.remove(),7000);
 
       return {
         ok:true,
@@ -1981,7 +2057,7 @@ async function refreshFromGoogleSheet(){
       window.GOOGLE_SHEET_RAW_PAYLOAD=previousPayload;
       const message=error&&error.message?error.message:String(error);
       setGoogleNotes('Core refresh failed: '+message);
-      finishGoogleProgress('Core refresh failed: '+message,true);
+      finishGoogleProgress('Core refresh failed: '+message,true,[]);
       alert('Could not refresh core Google Sheet data: '+message);
       return {ok:false,stage:'core',completed,failures,error:message};
     }finally{
