@@ -1505,6 +1505,136 @@ function loadJsonp(url, options){
   });
 }
 let googleRefreshPromise=null;
+let googleBackgroundRefreshPromise=null;
+
+function googleDelay(ms){
+  return new Promise(resolve=>setTimeout(resolve,ms));
+}
+
+async function loadGoogleBatchWithRetry(batch, options){
+  options=options||{};
+  const attempts=Number(options.attempts)||2;
+  const firstTimeout=Number(options.timeoutMs)||120000;
+  const retryTimeout=Number(options.retryTimeoutMs)||180000;
+  const retryDelay=Number(options.retryDelayMs)||2500;
+  let lastError=null;
+
+  for(let attempt=1;attempt<=attempts;attempt+=1){
+    try{
+      if(attempt>1){
+        setGoogleNotes('Retrying '+batch.label+' ('+attempt+'/'+attempts+')…');
+        await googleDelay(retryDelay*Math.max(1,attempt-1));
+      }
+      return await loadGoogleSheetScope(batch.scope,{
+        force:true,
+        timeoutMs:attempt===1?firstTimeout:retryTimeout
+      });
+    }catch(error){
+      lastError=error;
+    }
+  }
+  throw lastError||new Error(batch.label+' could not be loaded.');
+}
+
+function applyGoogleWorkingPayload(payload, completed, failures, stage){
+  window.GOOGLE_SHEET_RAW_PAYLOAD=mergeGoogleSheetPayload(
+    window.GOOGLE_SHEET_RAW_PAYLOAD,
+    payload
+  );
+
+  window.dispatchEvent(new CustomEvent('googleSheetPayloadReady',{
+    detail:window.GOOGLE_SHEET_RAW_PAYLOAD
+  }));
+
+  const normalized=normalizeGooglePayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+  Object.assign(FORECAST_DATA,normalized);
+  DASHBOARD_DATA=normalized.dashboardData||null;
+  QIDDIYA_DATA=normalized.qiddiyaData||null;
+  window.BANK_BALANCE_DATA=normalized.bankBalanceData||[];
+
+  if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)){
+    currentForecastSheet='GROUP';
+  }
+
+  refreshAll();
+
+  window.dispatchEvent(new CustomEvent('fip:data-ready',{
+    detail:{
+      scope:'dashboard',
+      stage:stage||'progressive',
+      updatedAt:new Date().toLocaleString(),
+      payload:window.GOOGLE_SHEET_RAW_PAYLOAD,
+      completedScopes:(completed||[]).slice(),
+      failedScopes:(failures||[]).slice()
+    }
+  }));
+}
+
+async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
+  const workingPayload={version:'FIP-6.2.6',sheets:{}};
+
+  for(let i=0;i<optionalBatches.length;i+=1){
+    const batch=optionalBatches[i];
+    setGoogleNotes(
+      'Core data loaded. Updating '+batch.label+
+      ' ('+(i+1)+'/'+optionalBatches.length+')…'
+    );
+
+    await googleDelay(i===0?2500:1600);
+
+    try{
+      const payload=await loadGoogleBatchWithRetry(batch,{
+        attempts:2,
+        timeoutMs:120000,
+        retryTimeoutMs:180000,
+        retryDelayMs:3500
+      });
+      mergeGoogleSheetPayload(workingPayload,payload);
+      completed.push(batch.scope);
+
+      // Apply each successful optional sheet immediately.
+      applyGoogleWorkingPayload(workingPayload,completed,failures,'optional');
+      workingPayload.sheets={};
+    }catch(error){
+      failures.push({
+        scope:batch.scope,
+        label:batch.label,
+        required:false,
+        message:error&&error.message?error.message:String(error)
+      });
+      console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE]',batch.scope,error);
+    }
+  }
+
+  const stamp=new Date().toLocaleString();
+  localStorage.setItem('cf_google_last_refresh',stamp);
+  localStorage.setItem('cf_google_last_scopes',JSON.stringify(completed));
+  localStorage.setItem('cf_google_last_failures',JSON.stringify(failures));
+
+  if(failures.length){
+    const names=failures.map(x=>x.label).join(', ');
+    setGoogleNotes(
+      'Core data updated at '+stamp+
+      '. Optional data not refreshed: '+names+
+      '. Existing values were retained.'
+    );
+  }else{
+    setGoogleNotes('All Google Sheet data updated at '+stamp);
+  }
+
+  window.dispatchEvent(new CustomEvent('fip:data-ready',{
+    detail:{
+      scope:'dashboard',
+      stage:'complete',
+      updatedAt:stamp,
+      payload:window.GOOGLE_SHEET_RAW_PAYLOAD,
+      completedScopes:completed.slice(),
+      failedScopes:failures.slice()
+    }
+  }));
+
+  return {ok:true,stage:'complete',completed,failures};
+}
 
 async function refreshFromGoogleSheet(){
   if(googleRefreshPromise) return googleRefreshPromise;
@@ -1517,117 +1647,95 @@ async function refreshFromGoogleSheet(){
 
   saveGoogleSheetUrl();
 
-  const batches=[
+  const coreBatches=[
     {scope:'summary-main',label:'dashboard summary',required:true},
-    {scope:'summary-debt',label:'debt summary',required:false},
-    {scope:'summary-capex',label:'capex summary',required:false},
-    {scope:'summary-collection-targets',label:'collection targets',required:false},
-    {scope:'summary-collection-actuals',label:'collection actuals',required:false},
-    {scope:'summary-receivable-history',label:'receivable history',required:false},
-    {scope:'summary-receivable-movement',label:'receivable movement',required:false},
-    {scope:'forecast-alg',label:'group forecast',required:true},
-    {scope:'forecast-alps',label:'ALPS forecast',required:false},
-    {scope:'forecast-alicler',label:'ALICLER forecast',required:false},
-    {scope:'forecast-ss',label:'Site Services forecast',required:false},
-    {scope:'forecast-ksa',label:'KSA forecast',required:false},
-    {scope:'forecast-oman',label:'Oman forecast',required:false},
-    {scope:'forecast-bahrain',label:'Bahrain forecast',required:false},
-    {scope:'forecast-uzbekistan',label:'Uzbekistan forecast',required:false}
+    {scope:'forecast-alg',label:'group forecast',required:true}
+  ];
+
+  const optionalBatches=[
+    {scope:'summary-debt',label:'debt summary'},
+    {scope:'summary-capex',label:'capex summary'},
+    {scope:'summary-collection-targets',label:'collection targets'},
+    {scope:'summary-collection-actuals',label:'collection actuals'},
+    {scope:'summary-receivable-history',label:'receivable history'},
+    {scope:'summary-receivable-movement',label:'receivable movement'},
+    {scope:'forecast-alps',label:'ALPS forecast'},
+    {scope:'forecast-alicler',label:'ALICLER forecast'},
+    {scope:'forecast-ss',label:'Site Services forecast'},
+    {scope:'forecast-ksa',label:'KSA forecast'},
+    {scope:'forecast-oman',label:'Oman forecast'},
+    {scope:'forecast-bahrain',label:'Bahrain forecast'},
+    {scope:'forecast-uzbekistan',label:'Uzbekistan forecast'}
   ];
 
   googleRefreshPromise=(async()=>{
-    const failures=[];
     const completed=[];
-
-    // Do not discard the last working payload before the replacement data is available.
+    const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const workingPayload={version:'FIP-6.2.5',sheets:{}};
+    const corePayload={version:'FIP-6.2.6',sheets:{}};
 
     try{
-      for(let i=0;i<batches.length;i+=1){
-        const batch=batches[i];
-        setGoogleNotes('Refreshing '+batch.label+' ('+(i+1)+'/'+batches.length+')…');
+      setGoogleNotes('Refreshing dashboard summary (1/2)…');
+      const summaryPayload=await loadGoogleBatchWithRetry(coreBatches[0],{
+        attempts:3,
+        timeoutMs:180000,
+        retryTimeoutMs:240000,
+        retryDelayMs:4000
+      });
+      mergeGoogleSheetPayload(corePayload,summaryPayload);
+      completed.push('summary-main');
 
-        try{
-          let payload;
-          try{
-            payload=await loadGoogleSheetScope(batch.scope,{
-              force:true,
-              timeoutMs:120000
-            });
-          }catch(firstError){
-            setGoogleNotes('Retrying '+batch.label+'…');
-            await new Promise(resolve=>setTimeout(resolve,1200));
-            payload=await loadGoogleSheetScope(batch.scope,{
-              force:true,
-              timeoutMs:180000
-            });
-          }
-          mergeGoogleSheetPayload(workingPayload,payload);
-          completed.push(batch.scope);
-        }catch(error){
-          failures.push({
-            scope:batch.scope,
-            label:batch.label,
-            required:batch.required,
-            message:error&&error.message?error.message:String(error)
-          });
+      // Give Apps Script a short recovery period before the heavy group forecast.
+      setGoogleNotes('Dashboard summary loaded. Preparing group forecast…');
+      await googleDelay(3500);
 
-          if(batch.required){
-            throw new Error(batch.label+' failed: '+failures[failures.length-1].message);
-          }
-        }
+      setGoogleNotes('Refreshing group forecast (2/2)…');
+      const forecastPayload=await loadGoogleBatchWithRetry(coreBatches[1],{
+        attempts:3,
+        timeoutMs:180000,
+        retryTimeoutMs:240000,
+        retryDelayMs:5000
+      });
+      mergeGoogleSheetPayload(corePayload,forecastPayload);
+      completed.push('forecast-alg');
+
+      applyGoogleWorkingPayload(corePayload,completed,failures,'core');
+
+      const coreStamp=new Date().toLocaleString();
+      setGoogleNotes(
+        'Core dashboard data updated at '+coreStamp+
+        '. Optional sheets are refreshing in the background.'
+      );
+
+      // Start optional loading separately so the dashboard is usable immediately.
+      if(!googleBackgroundRefreshPromise){
+        googleBackgroundRefreshPromise=refreshOptionalGoogleBatches(
+          optionalBatches,
+          completed,
+          failures
+        ).finally(()=>{
+          googleBackgroundRefreshPromise=null;
+        });
       }
 
-      // Merge all successful batches into the shared payload only after required data succeeded.
-      window.GOOGLE_SHEET_RAW_PAYLOAD=mergeGoogleSheetPayload(previousPayload,workingPayload);
-      window.dispatchEvent(new CustomEvent('googleSheetPayloadReady',{
-        detail:window.GOOGLE_SHEET_RAW_PAYLOAD
-      }));
+      alert(
+        'Core Google Sheet data loaded successfully. '+
+        'Optional summaries and entity forecasts will continue refreshing in the background.'
+      );
 
-      const normalized=normalizeGooglePayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
-      Object.assign(FORECAST_DATA,normalized);
-      DASHBOARD_DATA=normalized.dashboardData||null;
-      QIDDIYA_DATA=normalized.qiddiyaData||null;
-      window.BANK_BALANCE_DATA=normalized.bankBalanceData||[];
-
-      if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)){
-        currentForecastSheet='GROUP';
-      }
-
-      const stamp=new Date().toLocaleString();
-      localStorage.setItem('cf_google_last_refresh',stamp);
-      localStorage.setItem('cf_google_last_scopes',JSON.stringify(completed));
-      localStorage.setItem('cf_google_last_failures',JSON.stringify(failures));
-
-      refreshAll();
-
-      window.dispatchEvent(new CustomEvent('fip:data-ready',{
-        detail:{
-          scope:'dashboard',
-          updatedAt:stamp,
-          payload:window.GOOGLE_SHEET_RAW_PAYLOAD,
-          completedScopes:completed,
-          failedScopes:failures
-        }
-      }));
-
-      if(failures.length){
-        const names=failures.map(x=>x.label).join(', ');
-        setGoogleNotes('Google Sheet updated at '+stamp+'. Some forecast batches could not refresh: '+names+'. Last available values were retained where possible.');
-        alert('Google Sheet data loaded with a warning. The following optional data batches failed: '+names+'. Existing values for those entities were retained.');
-      }else{
-        setGoogleNotes('Google Sheet data updated at '+stamp);
-        alert('Google Sheet dashboard data loaded successfully.');
-      }
-
-      return {ok:true,completed,failures};
+      return {
+        ok:true,
+        stage:'core',
+        completed:completed.slice(),
+        failures:failures.slice(),
+        background:googleBackgroundRefreshPromise
+      };
     }catch(error){
       window.GOOGLE_SHEET_RAW_PAYLOAD=previousPayload;
       const message=error&&error.message?error.message:String(error);
-      setGoogleNotes('Refresh failed: '+message);
-      alert('Could not refresh from Google Sheet: '+message);
-      return {ok:false,completed,failures,error:message};
+      setGoogleNotes('Core refresh failed: '+message);
+      alert('Could not refresh core Google Sheet data: '+message);
+      return {ok:false,stage:'core',completed,failures,error:message};
     }finally{
       googleRefreshPromise=null;
     }
@@ -1635,7 +1743,11 @@ async function refreshFromGoogleSheet(){
 
   return googleRefreshPromise;
 }
+
 window.refreshFromGoogleSheet=refreshFromGoogleSheet;
+window.getGoogleBackgroundRefresh=function(){
+  return googleBackgroundRefreshPromise;
+};
 function handleExcelImport(e){ alert('Excel import button is ready in the UI. For reliable live updates from GitHub, use the Google Apps Script JSON connection so the hosted HTML can refresh from your Google Sheet.'); e.target.value=''; }
 
 
