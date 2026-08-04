@@ -1,4 +1,4 @@
-// ALG Cash Flow Dashboard v24.0 - scoped Google Sheet API
+// ALG Cash Flow Dashboard FIP 6.2.1 - resilient scoped data connector
 var DEFAULT_GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzmnGUq4lY8ZQeuHBgILPmv317HX5t4ou-dFVQZxhKe0SAe_4WfLDRGdfvsvffQQkIS/exec';
 var SHEET_IMPORT_NAMES = ['ALPS-CB','ALICLER-CB','SS-CB','OMAN-CB','KSA-CB','ALPS BR-CB','ALPS UZ-CB','Bank Balance'];
 var DASHBOARD_DATA = null;
@@ -1476,7 +1476,7 @@ function loadJsonp(url){
     const cb='cfJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2);
     const sep=url.includes('?')?'&':'?';
     const script=document.createElement('script');
-    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out after 60 seconds')); },60000);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out after 90 seconds')); },90000);
     function cleanup(){ clearTimeout(timer); delete window[cb]; if(script.parentNode) script.parentNode.removeChild(script); }
     window[cb]=(data)=>{ cleanup(); resolve(data); };
     script.onerror=()=>{ cleanup(); reject(new Error('Could not load Google Sheet API. Check Apps Script deployment and URL.')); };
@@ -1488,22 +1488,47 @@ async function refreshFromGoogleSheet(){
   const url=getGoogleSheetUrlInput();
   if(!url){alert('Please paste the Google Apps Script API URL first.');return;}
   saveGoogleSheetUrl();
-  setGoogleNotes('Refreshing core dashboard data...');
+  setGoogleNotes('Refreshing dashboard summary...');
   try{
-    const json=await loadGoogleSheetScope('core',{force:true});
-    const normalized=normalizeGooglePayload(json);
-    Object.assign(FORECAST_DATA, normalized);
-    DASHBOARD_DATA = normalized.dashboardData || null;
-    QIDDIYA_DATA = normalized.qiddiyaData || null;
-    window.BANK_BALANCE_DATA = normalized.bankBalanceData || [];
-    if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)) currentForecastSheet='GROUP';
-    setGoogleNotes('Core dashboard updated at '+new Date().toLocaleString());
+    // FIP 6.2.1 deliberately splits the former oversized core response.
+    // Loading the two smaller scopes sequentially avoids JSONP/script limits.
+    await loadGoogleSheetScope('summary',{force:true});
+    setGoogleNotes('Refreshing cash-flow forecast...');
+    await loadGoogleSheetScope('forecast',{force:true});
+
+    const merged=window.GOOGLE_SHEET_RAW_PAYLOAD;
+    const normalized=normalizeGooglePayload(merged);
+    Object.assign(FORECAST_DATA,normalized);
+    DASHBOARD_DATA=normalized.dashboardData||null;
+    QIDDIYA_DATA=normalized.qiddiyaData||null;
+    window.BANK_BALANCE_DATA=normalized.bankBalanceData||[];
+    if(!forecastSheets().some(s=>s.sheet===currentForecastSheet))currentForecastSheet='GROUP';
+
+    const stamp=new Date().toLocaleString();
+    localStorage.setItem('cf_google_last_refresh',stamp);
+    setGoogleNotes('Google Sheet data updated at '+stamp);
     refreshAll();
-    alert('Google Sheet core data loaded successfully.');
-  }
-  catch(e){
-    setGoogleNotes('Refresh failed: '+e.message);
-    alert('Could not refresh from Google Sheet: '+e.message);
+    window.dispatchEvent(new CustomEvent('fip:data-ready',{detail:{scope:'dashboard',updatedAt:stamp,payload:merged}}));
+    alert('Google Sheet dashboard data loaded successfully.');
+  }catch(e){
+    // Compatibility fallback for an Apps Script deployment that still has only scope=core.
+    try{
+      setGoogleNotes('Trying compatibility refresh...');
+      const json=await loadGoogleSheetScope('core',{force:true});
+      const normalized=normalizeGooglePayload(json);
+      Object.assign(FORECAST_DATA,normalized);
+      DASHBOARD_DATA=normalized.dashboardData||null;
+      QIDDIYA_DATA=normalized.qiddiyaData||null;
+      window.BANK_BALANCE_DATA=normalized.bankBalanceData||[];
+      if(!forecastSheets().some(s=>s.sheet===currentForecastSheet))currentForecastSheet='GROUP';
+      const stamp=new Date().toLocaleString();
+      setGoogleNotes('Google Sheet data updated at '+stamp+' (compatibility mode)');
+      refreshAll();
+      alert('Google Sheet data loaded in compatibility mode. Deploy the FIP 6.2.1 Apps Script for faster refreshes.');
+    }catch(fallbackError){
+      setGoogleNotes('Refresh failed: '+fallbackError.message);
+      alert('Could not refresh from Google Sheet: '+fallbackError.message);
+    }
   }
 }
 function handleExcelImport(e){ alert('Excel import button is ready in the UI. For reliable live updates from GitHub, use the Google Apps Script JSON connection so the hosted HTML can refresh from your Google Sheet.'); e.target.value=''; }
