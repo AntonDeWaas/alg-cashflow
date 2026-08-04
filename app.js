@@ -1571,8 +1571,10 @@ function applyGoogleWorkingPayload(payload, completed, failures, stage){
 }
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.2.6',sheets:{}};
+  const firstPassFailures=[];
+  const workingPayload={version:'FIP-6.2.7',sheets:{}};
 
+  // First pass: slower pacing to reduce Apps Script throttling.
   for(let i=0;i<optionalBatches.length;i+=1){
     const batch=optionalBatches[i];
     setGoogleNotes(
@@ -1580,20 +1582,64 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
       ' ('+(i+1)+'/'+optionalBatches.length+')…'
     );
 
-    await googleDelay(i===0?2500:1600);
+    // Longer recovery gap between Apps Script executions.
+    await googleDelay(i===0?5000:4200);
 
     try{
       const payload=await loadGoogleBatchWithRetry(batch,{
         attempts:2,
-        timeoutMs:120000,
-        retryTimeoutMs:180000,
-        retryDelayMs:3500
+        timeoutMs:150000,
+        retryTimeoutMs:210000,
+        retryDelayMs:7000
       });
+
       mergeGoogleSheetPayload(workingPayload,payload);
       completed.push(batch.scope);
 
-      // Apply each successful optional sheet immediately.
       applyGoogleWorkingPayload(workingPayload,completed,failures,'optional');
+      workingPayload.sheets={};
+    }catch(error){
+      firstPassFailures.push({
+        batch:batch,
+        message:error&&error.message?error.message:String(error)
+      });
+      console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE_FIRST_PASS]',batch.scope,error);
+    }
+  }
+
+  // Cooldown before retrying only failed optional scopes.
+  if(firstPassFailures.length){
+    setGoogleNotes(
+      'Core data is available. Waiting before retrying '+
+      firstPassFailures.length+' optional data source(s)…'
+    );
+    await googleDelay(15000);
+  }
+
+  for(let i=0;i<firstPassFailures.length;i+=1){
+    const item=firstPassFailures[i];
+    const batch=item.batch;
+
+    setGoogleNotes(
+      'Retrying optional data: '+batch.label+
+      ' ('+(i+1)+'/'+firstPassFailures.length+')…'
+    );
+
+    // Extra spacing between second-pass retries.
+    if(i>0) await googleDelay(8000);
+
+    try{
+      const payload=await loadGoogleBatchWithRetry(batch,{
+        attempts:2,
+        timeoutMs:180000,
+        retryTimeoutMs:240000,
+        retryDelayMs:10000
+      });
+
+      mergeGoogleSheetPayload(workingPayload,payload);
+      if(!completed.includes(batch.scope))completed.push(batch.scope);
+
+      applyGoogleWorkingPayload(workingPayload,completed,failures,'optional-retry');
       workingPayload.sheets={};
     }catch(error){
       failures.push({
@@ -1602,7 +1648,7 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
         required:false,
         message:error&&error.message?error.message:String(error)
       });
-      console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE]',batch.scope,error);
+      console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE_FINAL]',batch.scope,error);
     }
   }
 
@@ -1615,11 +1661,11 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
     const names=failures.map(x=>x.label).join(', ');
     setGoogleNotes(
       'Core data updated at '+stamp+
-      '. Optional data not refreshed: '+names+
+      '. Optional data not refreshed after retry: '+names+
       '. Existing values were retained.'
     );
   }else{
-    setGoogleNotes('All Google Sheet data updated at '+stamp);
+    setGoogleNotes('All Google Sheet data updated successfully at '+stamp);
   }
 
   window.dispatchEvent(new CustomEvent('fip:data-ready',{
@@ -1635,7 +1681,6 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
 
   return {ok:true,stage:'complete',completed,failures};
 }
-
 async function refreshFromGoogleSheet(){
   if(googleRefreshPromise) return googleRefreshPromise;
 
@@ -1672,7 +1717,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.2.6',sheets:{}};
+    const corePayload={version:'FIP-6.2.7',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing dashboard summary (1/2)…');
