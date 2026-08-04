@@ -1570,17 +1570,199 @@ function applyGoogleWorkingPayload(payload, completed, failures, stage){
   }));
 }
 
+
+const googleProgressState={
+  active:false,
+  total:0,
+  completed:0,
+  failed:0,
+  current:'',
+  startedAt:0
+};
+
+function googleRefreshButtons(){
+  return Array.from(document.querySelectorAll('button')).filter(button=>{
+    const label=String(button.textContent||'').replace(/\s+/g,' ').trim();
+    return /^Refresh Google Sheet$/i.test(label) ||
+      button.dataset.googleRefreshButton==='true';
+  });
+}
+
+function setGoogleRefreshButtonsBusy(busy){
+  googleRefreshButtons().forEach(button=>{
+    if(!button.dataset.googleRefreshOriginal){
+      button.dataset.googleRefreshOriginal=
+        String(button.textContent||'Refresh Google Sheet').trim();
+    }
+    button.dataset.googleRefreshButton='true';
+    button.disabled=Boolean(busy);
+    button.setAttribute('aria-busy',busy?'true':'false');
+    button.textContent=busy?'Refreshing Google Sheet…':
+      button.dataset.googleRefreshOriginal;
+  });
+}
+
+function ensureGoogleProgressUI(){
+  let wrap=document.getElementById('googleSheetRefreshProgress');
+  if(wrap)return wrap;
+
+  const style=document.createElement('style');
+  style.id='googleSheetRefreshProgressStyles';
+  style.textContent=`
+    #googleSheetRefreshProgress{
+      position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+      z-index:100000;width:min(720px,calc(100vw - 32px));
+      background:#fff;border:1px solid #d9d3c9;border-radius:12px;
+      box-shadow:0 14px 38px rgba(20,35,55,.22);
+      padding:13px 15px;display:none;color:#21324a
+    }
+    #googleSheetRefreshProgress.is-visible{display:block}
+    #googleSheetRefreshProgress .gs-progress-head{
+      display:flex;justify-content:space-between;gap:14px;align-items:center;
+      margin-bottom:8px;font-size:13px;font-weight:800
+    }
+    #googleSheetRefreshProgress .gs-progress-title{
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+    }
+    #googleSheetRefreshProgress .gs-progress-percent{
+      color:#143b68;min-width:48px;text-align:right
+    }
+    #googleSheetRefreshProgress .gs-progress-track{
+      height:10px;background:#e9edf2;border-radius:999px;overflow:hidden
+    }
+    #googleSheetRefreshProgress .gs-progress-fill{
+      height:100%;width:0;background:linear-gradient(90deg,#0c6b58,#3f7fda);
+      transition:width .35s ease
+    }
+    #googleSheetRefreshProgress .gs-progress-meta{
+      display:flex;justify-content:space-between;gap:12px;
+      margin-top:7px;font-size:11px;color:#6d7785
+    }
+    #googleSheetRefreshProgress.is-warning .gs-progress-fill{
+      background:linear-gradient(90deg,#cf8a16,#e8ae3b)
+    }
+    #googleSheetRefreshProgress.is-error .gs-progress-fill{
+      background:#c0392b
+    }
+  `;
+  document.head.appendChild(style);
+
+  wrap=document.createElement('div');
+  wrap.id='googleSheetRefreshProgress';
+  wrap.setAttribute('role','status');
+  wrap.setAttribute('aria-live','polite');
+  wrap.innerHTML=`
+    <div class="gs-progress-head">
+      <span class="gs-progress-title">Preparing Google Sheet refresh…</span>
+      <span class="gs-progress-percent">0%</span>
+    </div>
+    <div class="gs-progress-track">
+      <div class="gs-progress-fill"></div>
+    </div>
+    <div class="gs-progress-meta">
+      <span class="gs-progress-count">0 of 0 data sources</span>
+      <span class="gs-progress-time">Starting…</span>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  return wrap;
+}
+
+function renderGoogleProgress(){
+  const wrap=ensureGoogleProgressUI();
+  const total=Math.max(1,googleProgressState.total);
+  const percent=Math.min(
+    100,
+    Math.round((googleProgressState.completed/total)*100)
+  );
+  const elapsed=googleProgressState.startedAt
+    ? Math.max(0,Math.round((Date.now()-googleProgressState.startedAt)/1000))
+    : 0;
+
+  wrap.classList.toggle('is-visible',googleProgressState.active);
+  wrap.querySelector('.gs-progress-title').textContent=
+    googleProgressState.current||'Refreshing Google Sheet…';
+  wrap.querySelector('.gs-progress-percent').textContent=percent+'%';
+  wrap.querySelector('.gs-progress-fill').style.width=percent+'%';
+  wrap.querySelector('.gs-progress-count').textContent=
+    googleProgressState.completed+' of '+googleProgressState.total+
+    ' data sources'+
+    (googleProgressState.failed
+      ? ' · '+googleProgressState.failed+' warning(s)'
+      : '');
+  wrap.querySelector('.gs-progress-time').textContent=
+    elapsed<60
+      ? elapsed+' sec elapsed'
+      : Math.floor(elapsed/60)+'m '+(elapsed%60)+'s elapsed';
+}
+
+function beginGoogleProgress(total,label){
+  googleProgressState.active=true;
+  googleProgressState.total=Number(total)||1;
+  googleProgressState.completed=0;
+  googleProgressState.failed=0;
+  googleProgressState.current=label||'Starting Google Sheet refresh…';
+  googleProgressState.startedAt=Date.now();
+  const wrap=ensureGoogleProgressUI();
+  wrap.classList.remove('is-warning','is-error');
+  setGoogleRefreshButtonsBusy(true);
+  renderGoogleProgress();
+}
+
+function setGoogleProgressCurrent(label){
+  googleProgressState.current=label||googleProgressState.current;
+  renderGoogleProgress();
+}
+
+function advanceGoogleProgress(label,failed){
+  googleProgressState.completed=Math.min(
+    googleProgressState.total,
+    googleProgressState.completed+1
+  );
+  if(failed)googleProgressState.failed+=1;
+  googleProgressState.current=label||googleProgressState.current;
+  const wrap=ensureGoogleProgressUI();
+  wrap.classList.toggle('is-warning',googleProgressState.failed>0);
+  renderGoogleProgress();
+}
+
+function finishGoogleProgress(message,error){
+  googleProgressState.completed=googleProgressState.total;
+  googleProgressState.current=message||
+    (error?'Google Sheet refresh failed.':'Google Sheet refresh complete.');
+  const wrap=ensureGoogleProgressUI();
+  wrap.classList.toggle('is-error',Boolean(error));
+  renderGoogleProgress();
+  setGoogleRefreshButtonsBusy(false);
+
+  window.setTimeout(()=>{
+    googleProgressState.active=false;
+    renderGoogleProgress();
+  },error?12000:6000);
+}
+
+window.getGoogleRefreshProgress=function(){
+  return Object.assign({},googleProgressState,{
+    percent:googleProgressState.total
+      ? Math.round(
+          (googleProgressState.completed/googleProgressState.total)*100
+        )
+      : 0
+  });
+};
+
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
   const firstPassFailures=[];
-  const workingPayload={version:'FIP-6.2.7',sheets:{}};
+  const workingPayload={version:'FIP-6.2.8',sheets:{}};
 
   // First pass: slower pacing to reduce Apps Script throttling.
   for(let i=0;i<optionalBatches.length;i+=1){
     const batch=optionalBatches[i];
-    setGoogleNotes(
-      'Core data loaded. Updating '+batch.label+
-      ' ('+(i+1)+'/'+optionalBatches.length+')…'
-    );
+    const optionalLabel=
+      'Updating '+batch.label+
+      ' ('+(i+1)+'/'+optionalBatches.length+' optional)…';
+    setGoogleNotes('Core data loaded. '+optionalLabel);
+    setGoogleProgressCurrent(optionalLabel);
 
     // Longer recovery gap between Apps Script executions.
     await googleDelay(i===0?5000:4200);
@@ -1598,6 +1780,7 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
 
       applyGoogleWorkingPayload(workingPayload,completed,failures,'optional');
       workingPayload.sheets={};
+      advanceGoogleProgress(batch.label+' updated',false);
     }catch(error){
       firstPassFailures.push({
         batch:batch,
@@ -1620,10 +1803,11 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
     const item=firstPassFailures[i];
     const batch=item.batch;
 
-    setGoogleNotes(
-      'Retrying optional data: '+batch.label+
-      ' ('+(i+1)+'/'+firstPassFailures.length+')…'
-    );
+    const retryLabel=
+      'Retrying '+batch.label+
+      ' ('+(i+1)+'/'+firstPassFailures.length+' retry)…';
+    setGoogleNotes(retryLabel);
+    setGoogleProgressCurrent(retryLabel);
 
     // Extra spacing between second-pass retries.
     if(i>0) await googleDelay(8000);
@@ -1641,6 +1825,7 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
 
       applyGoogleWorkingPayload(workingPayload,completed,failures,'optional-retry');
       workingPayload.sheets={};
+      advanceGoogleProgress(batch.label+' updated after retry',false);
     }catch(error){
       failures.push({
         scope:batch.scope,
@@ -1649,6 +1834,7 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
         message:error&&error.message?error.message:String(error)
       });
       console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE_FINAL]',batch.scope,error);
+      advanceGoogleProgress(batch.label+' retained from existing data',true);
     }
   }
 
@@ -1667,6 +1853,13 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
   }else{
     setGoogleNotes('All Google Sheet data updated successfully at '+stamp);
   }
+
+  finishGoogleProgress(
+    failures.length
+      ? 'Refresh complete with '+failures.length+' optional warning(s).'
+      : 'All Google Sheet data updated successfully.',
+    false
+  );
 
   window.dispatchEvent(new CustomEvent('fip:data-ready',{
     detail:{
@@ -1713,14 +1906,20 @@ async function refreshFromGoogleSheet(){
     {scope:'forecast-uzbekistan',label:'Uzbekistan forecast'}
   ];
 
+  beginGoogleProgress(
+    coreBatches.length+optionalBatches.length,
+    'Refreshing dashboard summary…'
+  );
+
   googleRefreshPromise=(async()=>{
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.2.7',sheets:{}};
+    const corePayload={version:'FIP-6.2.8',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing dashboard summary (1/2)…');
+      setGoogleProgressCurrent('Refreshing dashboard summary (1/2)…');
       const summaryPayload=await loadGoogleBatchWithRetry(coreBatches[0],{
         attempts:3,
         timeoutMs:180000,
@@ -1729,12 +1928,14 @@ async function refreshFromGoogleSheet(){
       });
       mergeGoogleSheetPayload(corePayload,summaryPayload);
       completed.push('summary-main');
+      advanceGoogleProgress('Dashboard summary updated',false);
 
       // Give Apps Script a short recovery period before the heavy group forecast.
       setGoogleNotes('Dashboard summary loaded. Preparing group forecast…');
       await googleDelay(3500);
 
       setGoogleNotes('Refreshing group forecast (2/2)…');
+      setGoogleProgressCurrent('Refreshing group forecast (2/2)…');
       const forecastPayload=await loadGoogleBatchWithRetry(coreBatches[1],{
         attempts:3,
         timeoutMs:180000,
@@ -1743,6 +1944,7 @@ async function refreshFromGoogleSheet(){
       });
       mergeGoogleSheetPayload(corePayload,forecastPayload);
       completed.push('forecast-alg');
+      advanceGoogleProgress('Core data loaded; optional updates starting…',false);
 
       applyGoogleWorkingPayload(corePayload,completed,failures,'core');
 
@@ -1779,6 +1981,7 @@ async function refreshFromGoogleSheet(){
       window.GOOGLE_SHEET_RAW_PAYLOAD=previousPayload;
       const message=error&&error.message?error.message:String(error);
       setGoogleNotes('Core refresh failed: '+message);
+      finishGoogleProgress('Core refresh failed: '+message,true);
       alert('Could not refresh core Google Sheet data: '+message);
       return {ok:false,stage:'core',completed,failures,error:message};
     }finally{
