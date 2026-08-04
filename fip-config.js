@@ -1,7 +1,7 @@
 (function(global){
 'use strict';
-const VERSION='6.2.0';
-const CACHE_KEY='alg-fip-config-v6.2';
+const VERSION='6.2.5';
+const CACHE_KEY='alg-fip-config-v6.2.5';
 const DEFAULTS={
   version:VERSION,
   entities:[

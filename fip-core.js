@@ -1,6 +1,6 @@
 (function(global){
 'use strict';
-const VERSION='6.2.0';
+const VERSION='6.2.5';
 
 function load(src){
   return new Promise((resolve,reject)=>{
@@ -67,7 +67,7 @@ function renderManager(){
   const cfg=global.FIP_CONFIG.data,status=global.FIP_CONFIG.status,r=rowsForConfig(cfg);
   const sourceStatus=status.error?'error':status.source;
   overlay.innerHTML=`<div class="fip-manager">
-    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.2 · Business Rules Engine</p></div><button data-close>×</button></header>
+    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.2.5 · Granular Data Stability</p></div><button data-close>×</button></header>
     <div class="fip-manager-toolbar">
       <div><strong>Configuration:</strong> ${global.FIP_COMPONENTS.statusBadge(sourceStatus)}
         <strong>Rules:</strong> ${global.FIP_COMPONENTS.statusBadge('loaded')}
@@ -126,7 +126,7 @@ function renderManager(){
 function managerButton(){
   let b=document.getElementById('fipManagerButton');
   if(!b){b=document.createElement('button');b.id='fipManagerButton';b.type='button';document.body.appendChild(b)}
-  b.innerHTML='<span>FIP</span><small>6.2</small>';b.title='Open FIP 6.2 Business Rules Engine';b.onclick=renderManager;
+  b.innerHTML='<span>FIP</span><small>6.2.5</small>';b.title='Open FIP 6.2.5';b.onclick=renderManager;
 }
 function styles(){
   if(document.getElementById('fipManagerStyles'))document.getElementById('fipManagerStyles').remove();
@@ -164,8 +164,6 @@ async function boot(){
       open:renderManager
     };
     styles();managerButton();
-    await global.FIP_CONFIG.load();
-
     const nav=global.FIP_CONFIG.navigation();
     if(nav.length&&!localStorage.getItem('alg-fip-navigation-v6.2')){
       global.FIP_NAVIGATION.apply(nav.map(x=>x.id));

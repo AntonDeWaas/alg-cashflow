@@ -1520,11 +1520,19 @@ async function refreshFromGoogleSheet(){
   const batches=[
     {scope:'summary-main',label:'dashboard summary',required:true},
     {scope:'summary-debt',label:'debt summary',required:false},
-    {scope:'summary-support',label:'supporting dashboard data',required:false},
-    {scope:'forecast-group',label:'group forecast',required:true},
-    {scope:'forecast-uae',label:'UAE forecast',required:false},
+    {scope:'summary-capex',label:'capex summary',required:false},
+    {scope:'summary-collection-targets',label:'collection targets',required:false},
+    {scope:'summary-collection-actuals',label:'collection actuals',required:false},
+    {scope:'summary-receivable-history',label:'receivable history',required:false},
+    {scope:'summary-receivable-movement',label:'receivable movement',required:false},
+    {scope:'forecast-alg',label:'group forecast',required:true},
+    {scope:'forecast-alps',label:'ALPS forecast',required:false},
+    {scope:'forecast-alicler',label:'ALICLER forecast',required:false},
+    {scope:'forecast-ss',label:'Site Services forecast',required:false},
     {scope:'forecast-ksa',label:'KSA forecast',required:false},
-    {scope:'forecast-other',label:'Oman, Bahrain and Uzbekistan forecast',required:false}
+    {scope:'forecast-oman',label:'Oman forecast',required:false},
+    {scope:'forecast-bahrain',label:'Bahrain forecast',required:false},
+    {scope:'forecast-uzbekistan',label:'Uzbekistan forecast',required:false}
   ];
 
   googleRefreshPromise=(async()=>{
@@ -1533,7 +1541,7 @@ async function refreshFromGoogleSheet(){
 
     // Do not discard the last working payload before the replacement data is available.
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const workingPayload={version:'FIP-6.2.4',sheets:{}};
+    const workingPayload={version:'FIP-6.2.5',sheets:{}};
 
     try{
       for(let i=0;i<batches.length;i+=1){
@@ -1541,10 +1549,20 @@ async function refreshFromGoogleSheet(){
         setGoogleNotes('Refreshing '+batch.label+' ('+(i+1)+'/'+batches.length+')…');
 
         try{
-          const payload=await loadGoogleSheetScope(batch.scope,{
-            force:true,
-            timeoutMs:120000
-          });
+          let payload;
+          try{
+            payload=await loadGoogleSheetScope(batch.scope,{
+              force:true,
+              timeoutMs:120000
+            });
+          }catch(firstError){
+            setGoogleNotes('Retrying '+batch.label+'…');
+            await new Promise(resolve=>setTimeout(resolve,1200));
+            payload=await loadGoogleSheetScope(batch.scope,{
+              force:true,
+              timeoutMs:180000
+            });
+          }
           mergeGoogleSheetPayload(workingPayload,payload);
           completed.push(batch.scope);
         }catch(error){
