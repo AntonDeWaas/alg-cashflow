@@ -1,4 +1,4 @@
-// Dynamic CAPEX Summary dashboard module
+// Dynamic CAPEX Summary dashboard module — scoped loading fix
 // Reads the "Capex Summary" Google Sheet tab and injects its own navigation/view.
 // Designed to work without changing app.js or the live HTML structure.
 
@@ -515,43 +515,128 @@
     return key && Array.isArray(sheets[key]) ? sheets[key] : [];
   }
 
+  function applyCapexPayload(payload) {
+    const rows = readCapexSheet(payload);
+    if (!rows.length) return false;
+
+    MODULE.data = rows;
+    MODULE.lastUpdated = payload && payload.lastUpdated
+      ? new Date(payload.lastUpdated).toLocaleString()
+      : new Date().toLocaleString();
+
+    window.CAPEX_SUMMARY_DATA = MODULE.data;
+    render();
+    return true;
+  }
+
+  function mergeSharedPayload(payload) {
+    if (!payload || !payload.sheets) return;
+    window.GOOGLE_SHEET_RAW_PAYLOAD =
+      window.GOOGLE_SHEET_RAW_PAYLOAD || { sheets: {} };
+    window.GOOGLE_SHEET_RAW_PAYLOAD.sheets =
+      window.GOOGLE_SHEET_RAW_PAYLOAD.sheets || {};
+
+    Object.assign(
+      window.GOOGLE_SHEET_RAW_PAYLOAD.sheets,
+      payload.sheets
+    );
+
+    if (payload.lastUpdated) {
+      window.GOOGLE_SHEET_RAW_PAYLOAD.lastUpdated = payload.lastUpdated;
+    }
+  }
+
   async function refresh(options) {
     options = options || {};
     injectUi();
 
     const root = byId('capexRoot');
-    if (root && !options.silent) root.innerHTML = '<div class="empty">Refreshing Capex Summary…</div>';
+    const button = byId('capexRefreshBtn');
 
-    const url = getApiUrl();
-    if (!url) {
-      if (root) root.innerHTML = '<div class="empty">Google Apps Script URL is not configured.</div>';
-      return;
+    // Reuse the payload already loaded by the main dashboard whenever possible.
+    if (!options.force && applyCapexPayload(window.GOOGLE_SHEET_RAW_PAYLOAD)) {
+      return true;
+    }
+
+    if (root && !options.silent) {
+      root.innerHTML = '<div class="empty">Refreshing Capex Summary…</div>';
+    }
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Refreshing CAPEX…';
     }
 
     try {
-      const payload = await jsonp(url);
-      MODULE.data = readCapexSheet(payload);
-      MODULE.lastUpdated = payload && payload.lastUpdated
-        ? new Date(payload.lastUpdated).toLocaleString()
-        : new Date().toLocaleString();
-      window.CAPEX_SUMMARY_DATA = MODULE.data;
-      render();
+      let payload = null;
+
+      // Preferred path: use the common scoped loader from app.js.
+      if (typeof window.loadGoogleSheetScope === 'function') {
+        try {
+          payload = await window.loadGoogleSheetScope(
+            'summary-capex',
+            { force: true, timeoutMs: 120000 }
+          );
+        } catch (firstError) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          payload = await window.loadGoogleSheetScope(
+            'summary-capex',
+            { force: true, timeoutMs: 180000 }
+          );
+        }
+      } else {
+        // Compatibility fallback for older app.js versions.
+        const url = getApiUrl();
+        if (!url) {
+          throw new Error('Google Apps Script URL is not configured.');
+        }
+        const separator = url.includes('?') ? '&' : '?';
+        payload = await jsonp(
+          url + separator + 'scope=summary-capex'
+        );
+      }
+
+      mergeSharedPayload(payload);
+
+      if (!applyCapexPayload(payload) &&
+          !applyCapexPayload(window.GOOGLE_SHEET_RAW_PAYLOAD)) {
+        throw new Error(
+          'The Capex Summary sheet was not returned by Google Apps Script.'
+        );
+      }
+
+      return true;
     } catch (error) {
       if (root) {
-        root.innerHTML = `<div class="empty">Could not load Capex Summary: ${esc(error.message)}</div>`;
+        root.innerHTML =
+          '<div class="empty">Could not load Capex Summary: ' +
+          esc(error && error.message ? error.message : String(error)) +
+          '</div>';
+      }
+      console.error('[CAPEX_MODULE]', error);
+      return false;
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Refresh CAPEX';
       }
     }
   }
 
   function wrapMainRefresh() {
-    if (MODULE.refreshWrapped || typeof window.refreshFromGoogleSheet !== 'function') return false;
+    if (MODULE.refreshWrapped ||
+        typeof window.refreshFromGoogleSheet !== 'function') return false;
 
     const original = window.refreshFromGoogleSheet;
     window.refreshFromGoogleSheet = async function () {
       const result = await original.apply(this, arguments);
-      await refresh({ silent: true });
+
+      // The main refresh already loads summary-capex. Re-render from the
+      // shared payload instead of starting a competing endpoint request.
+      applyCapexPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
       return result;
     };
+
     MODULE.refreshWrapped = true;
     return true;
   }
@@ -566,7 +651,25 @@
     }, 250);
 
     setTimeout(() => clearInterval(timer), 15000);
-    setTimeout(() => refresh({ silent: true }), 400);
+
+    window.addEventListener('googleSheetPayloadReady', function (event) {
+      applyCapexPayload(
+        event && event.detail
+          ? event.detail
+          : window.GOOGLE_SHEET_RAW_PAYLOAD
+      );
+    });
+
+    setTimeout(() => {
+      if (!applyCapexPayload(window.GOOGLE_SHEET_RAW_PAYLOAD)) {
+        const root = byId('capexRoot');
+        if (root) {
+          root.innerHTML =
+            '<div class="empty">Click <strong>Refresh Google Sheet</strong> ' +
+            'or <strong>Refresh CAPEX</strong> to load Capex Summary.</div>';
+        }
+      }
+    }, 600);
   }
 
   MODULE.refresh = refresh;
