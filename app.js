@@ -1974,7 +1974,7 @@ async function refreshFromGoogleSheet(){
     {scope:'forecast-ss',label:'Site Services forecast'},
     {scope:'forecast-ksa',label:'KSA forecast'},
     {scope:'forecast-oman',label:'Oman forecast'},
-    {scope:'forecast-bahrain',label:'Bahrain forecast'},
+    {scope:'forecast-alps-rak', label:'ALPS RAK Branch forecast'},
     {scope:'forecast-uzbekistan',label:'Uzbekistan forecast'}
   ];
 
