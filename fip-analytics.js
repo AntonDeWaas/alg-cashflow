@@ -1,4 +1,4 @@
-// FIP Analytics Engine v6.1
+// FIP Analytics Engine v6.2
 (function(global){
 'use strict';
 const A={

@@ -7,7 +7,9 @@ const C={
   alert({severity='info',title,message,action=''}){return `<div class="fip-alert ${esc(severity)}"><strong>${esc(title)}</strong><span>${esc(message)}</span>${action?`<button type="button">${esc(action)}</button>`:''}</div>`},
   table({headers,rows,classes=''}){return `<div class="fip-table-wrap"><table class="fip-table ${esc(classes)}"><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`},
   panel(title,body,subtitle=''){return `<section class="fip-card fip-panel"><header><div><h3>${esc(title)}</h3>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div></header>${body}</section>`},
-  statusBadge(status){const s=String(status||'unknown').toLowerCase();return `<span class="fip-status ${esc(s)}">${esc(status)}</span>`}
+  statusBadge(status){const s=String(status||'unknown').toLowerCase();return `<span class="fip-status ${esc(s)}">${esc(status)}</span>`},
+  ruleCard(item){return `<article class="fip-rule-card"><div><strong>${esc(item.rule)}</strong><small>${esc(item.source)}</small></div><div class="fip-rule-result">${esc(item.result)}</div><p>${esc(item.formula)}</p></article>`},
+  healthRow(item){return `<tr><td>${esc(item.name)}</td><td>${esc(item.expected)}</td><td>${esc(item.actual)}</td><td>${this.statusBadge(item.ok?'ok':'error')}</td></tr>`}
 };
 function styles(){
   if(document.getElementById('fipComponentStyles'))return;
@@ -17,7 +19,9 @@ function styles(){
 .fip-panel{padding:0;overflow:hidden}.fip-panel>header{padding:14px 16px;border-bottom:1px solid #ece7df}.fip-panel h3{margin:0;color:#153a66}.fip-panel header p{margin:4px 0 0;color:#77808d;font-size:.78rem}
 .fip-table-wrap{overflow:auto;max-height:540px}.fip-table{width:100%;border-collapse:separate;border-spacing:0}.fip-table th{position:sticky;top:0;z-index:4;background:#153a66;color:#fff;padding:9px;text-align:left}.fip-table td{padding:8px 9px;border-bottom:1px solid #ece7df}.fip-table tbody tr:nth-child(even){background:#f8fafc}
 .fip-alert{display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:12px;border-radius:9px;margin:8px 0}.fip-alert.red{background:#fde7e4;color:#9f241b}.fip-alert.amber{background:#fff3d8;color:#855600}.fip-alert.green{background:#e8f6ef;color:#176844}.fip-alert.info{background:#eaf2fb;color:#204f7c}
-.fip-status{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:.72rem;font-weight:800}.fip-status.loaded,.fip-status.google-sheet,.fip-status.ok{background:#e7f6ee;color:#187247}.fip-status.cache,.fip-status.defaults,.fip-status.warning{background:#fff2d7;color:#875b00}.fip-status.error{background:#fde7e4;color:#ad2c23}`;
+.fip-status{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:.72rem;font-weight:800}.fip-status.loaded,.fip-status.google-sheet,.fip-status.ok{background:#e7f6ee;color:#187247}.fip-status.cache,.fip-status.defaults,.fip-status.warning{background:#fff2d7;color:#875b00}.fip-status.error{background:#fde7e4;color:#ad2c23}
+.fip-rule-card{display:grid;grid-template-columns:1fr auto;gap:8px;border:1px solid #e2ddd4;border-radius:10px;padding:12px;margin:8px 0;background:#fff}
+.fip-rule-card strong{display:block;color:#153a66}.fip-rule-card small{display:block;color:#7b8490;margin-top:3px}.fip-rule-card p{grid-column:1/3;margin:2px 0 0;color:#626d7a;font-size:.78rem}.fip-rule-result{font-weight:900;color:#16704a;align-self:center}`;
   document.head.appendChild(s);
 }
 styles();global.FIP_COMPONENTS=C;

@@ -1,6 +1,6 @@
 (function(global){
 'use strict';
-const STORE='alg-fip-navigation-v6.1';
+const STORE='alg-fip-navigation-v6.2';
 const KNOWN=[
   'Consolidated','Executive Summary','Liquidity Excl. Qiddiya','Group Forecast',
   'By Business Unit','Transactions','Settings & Data','Bank Balance','PDC Issued',
