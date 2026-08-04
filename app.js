@@ -1518,7 +1518,9 @@ async function refreshFromGoogleSheet(){
   saveGoogleSheetUrl();
 
   const batches=[
-    {scope:'summary',label:'dashboard summary',required:true},
+    {scope:'summary-main',label:'dashboard summary',required:true},
+    {scope:'summary-debt',label:'debt summary',required:false},
+    {scope:'summary-support',label:'supporting dashboard data',required:false},
     {scope:'forecast-group',label:'group forecast',required:true},
     {scope:'forecast-uae',label:'UAE forecast',required:false},
     {scope:'forecast-ksa',label:'KSA forecast',required:false},
@@ -1531,7 +1533,7 @@ async function refreshFromGoogleSheet(){
 
     // Do not discard the last working payload before the replacement data is available.
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const workingPayload={version:'FIP-6.2.3',sheets:{}};
+    const workingPayload={version:'FIP-6.2.4',sheets:{}};
 
     try{
       for(let i=0;i<batches.length;i+=1){
@@ -1595,7 +1597,7 @@ async function refreshFromGoogleSheet(){
       if(failures.length){
         const names=failures.map(x=>x.label).join(', ');
         setGoogleNotes('Google Sheet updated at '+stamp+'. Some forecast batches could not refresh: '+names+'. Last available values were retained where possible.');
-        alert('Google Sheet data loaded with a warning. The following optional forecast batches failed: '+names+'. Existing values for those entities were retained.');
+        alert('Google Sheet data loaded with a warning. The following optional data batches failed: '+names+'. Existing values for those entities were retained.');
       }else{
         setGoogleNotes('Google Sheet data updated at '+stamp);
         alert('Google Sheet dashboard data loaded successfully.');

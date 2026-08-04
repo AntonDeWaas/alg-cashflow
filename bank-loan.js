@@ -345,7 +345,7 @@
     // Ask the shared app.js connector for the summary scope.
     // This avoids a duplicate standalone JSONP request.
     if (typeof window.loadGoogleSheetScope === 'function') {
-      loadingPromise = window.loadGoogleSheetScope('summary', { force: Boolean(force) })
+      loadingPromise = window.loadGoogleSheetScope('summary-debt', { force: Boolean(force) })
         .then(payload => {
           const matrix = matrixFromSharedPayload(payload);
           if (!matrix) {
@@ -363,7 +363,7 @@
     const url = getApiUrl();
     if (!url) throw new Error('Google Sheet API URL is not configured.');
 
-    const scopedUrl = url + (url.includes('?') ? '&' : '?') + 'scope=summary';
+    const scopedUrl = url + (url.includes('?') ? '&' : '?') + 'scope=summary-debt';
     loadingPromise = loadJsonp(scopedUrl)
       .then(payload => {
         const matrix = extractSheet(payload);
@@ -441,7 +441,7 @@
       cachedMatrix = matrix;
       module.render(matrix);
     } else {
-      module.load(false);
+      renderStatus('Debt Summary will load after the next Google Sheet refresh.');
     }
   }
 
