@@ -1438,7 +1438,10 @@ async function loadGoogleSheetScope(scope, options){
     return cache[scope];
   }
 
-  const payload=await loadJsonp(googleScopeUrl(url,scope));
+  const payload=await loadJsonp(googleScopeUrl(url,scope),{
+    timeoutMs:options.timeoutMs||120000,
+    label:'Google Sheet scope "'+scope+'"'
+  });
   cache[scope]=payload;
   window.GOOGLE_SHEET_RAW_PAYLOAD=mergeGoogleSheetPayload(window.GOOGLE_SHEET_RAW_PAYLOAD,payload);
   window.dispatchEvent(new CustomEvent('googleSheetPayloadReady',{detail:window.GOOGLE_SHEET_RAW_PAYLOAD}));
@@ -1471,66 +1474,148 @@ function normalizeGooglePayload(json){
     bankBalanceData: sheets['Bank Balance'] || []
   };
 }
-function loadJsonp(url){
+function loadJsonp(url, options){
+  options=options||{};
+  const timeoutMs=Number(options.timeoutMs)||120000;
+  const label=options.label||'Google Sheet request';
   return new Promise((resolve,reject)=>{
     const cb='cfJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2);
     const sep=url.includes('?')?'&':'?';
     const script=document.createElement('script');
-    const timer=setTimeout(()=>{ cleanup(); reject(new Error('Google Sheet request timed out after 90 seconds')); },90000);
-    function cleanup(){ clearTimeout(timer); delete window[cb]; if(script.parentNode) script.parentNode.removeChild(script); }
-    window[cb]=(data)=>{ cleanup(); resolve(data); };
-    script.onerror=()=>{ cleanup(); reject(new Error('Could not load Google Sheet API. Check Apps Script deployment and URL.')); };
+    let settled=false;
+    const timer=setTimeout(()=>{
+      cleanup();
+      reject(new Error(label+' timed out after '+Math.round(timeoutMs/1000)+' seconds.'));
+    },timeoutMs);
+    function cleanup(){
+      clearTimeout(timer);
+      try{ delete window[cb]; }catch(_){ window[cb]=undefined; }
+      if(script.parentNode) script.parentNode.removeChild(script);
+    }
+    function finish(error,data){
+      if(settled) return;
+      settled=true;
+      cleanup();
+      error?reject(error):resolve(data);
+    }
+    window[cb]=(data)=>finish(null,data);
+    script.onerror=()=>finish(new Error(label+' could not be loaded from Google Apps Script.'));
     script.src=url+sep+'callback='+encodeURIComponent(cb)+'&t='+Date.now();
     document.body.appendChild(script);
   });
 }
+let googleRefreshPromise=null;
+
 async function refreshFromGoogleSheet(){
+  if(googleRefreshPromise) return googleRefreshPromise;
+
   const url=getGoogleSheetUrlInput();
-  if(!url){alert('Please paste the Google Apps Script API URL first.');return;}
+  if(!url){
+    alert('Please paste the Google Apps Script API URL first.');
+    return false;
+  }
+
   saveGoogleSheetUrl();
-  setGoogleNotes('Refreshing dashboard summary...');
-  try{
-    // FIP 6.2.1 deliberately splits the former oversized core response.
-    // Loading the two smaller scopes sequentially avoids JSONP/script limits.
-    await loadGoogleSheetScope('summary',{force:true});
-    setGoogleNotes('Refreshing cash-flow forecast...');
-    await loadGoogleSheetScope('forecast',{force:true});
 
-    const merged=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const normalized=normalizeGooglePayload(merged);
-    Object.assign(FORECAST_DATA,normalized);
-    DASHBOARD_DATA=normalized.dashboardData||null;
-    QIDDIYA_DATA=normalized.qiddiyaData||null;
-    window.BANK_BALANCE_DATA=normalized.bankBalanceData||[];
-    if(!forecastSheets().some(s=>s.sheet===currentForecastSheet))currentForecastSheet='GROUP';
+  const batches=[
+    {scope:'summary',label:'dashboard summary',required:true},
+    {scope:'forecast-group',label:'group forecast',required:true},
+    {scope:'forecast-uae',label:'UAE forecast',required:false},
+    {scope:'forecast-ksa',label:'KSA forecast',required:false},
+    {scope:'forecast-other',label:'Oman, Bahrain and Uzbekistan forecast',required:false}
+  ];
 
-    const stamp=new Date().toLocaleString();
-    localStorage.setItem('cf_google_last_refresh',stamp);
-    setGoogleNotes('Google Sheet data updated at '+stamp);
-    refreshAll();
-    window.dispatchEvent(new CustomEvent('fip:data-ready',{detail:{scope:'dashboard',updatedAt:stamp,payload:merged}}));
-    alert('Google Sheet dashboard data loaded successfully.');
-  }catch(e){
-    // Compatibility fallback for an Apps Script deployment that still has only scope=core.
+  googleRefreshPromise=(async()=>{
+    const failures=[];
+    const completed=[];
+
+    // Do not discard the last working payload before the replacement data is available.
+    const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
+    const workingPayload={version:'FIP-6.2.3',sheets:{}};
+
     try{
-      setGoogleNotes('Trying compatibility refresh...');
-      const json=await loadGoogleSheetScope('core',{force:true});
-      const normalized=normalizeGooglePayload(json);
+      for(let i=0;i<batches.length;i+=1){
+        const batch=batches[i];
+        setGoogleNotes('Refreshing '+batch.label+' ('+(i+1)+'/'+batches.length+')…');
+
+        try{
+          const payload=await loadGoogleSheetScope(batch.scope,{
+            force:true,
+            timeoutMs:120000
+          });
+          mergeGoogleSheetPayload(workingPayload,payload);
+          completed.push(batch.scope);
+        }catch(error){
+          failures.push({
+            scope:batch.scope,
+            label:batch.label,
+            required:batch.required,
+            message:error&&error.message?error.message:String(error)
+          });
+
+          if(batch.required){
+            throw new Error(batch.label+' failed: '+failures[failures.length-1].message);
+          }
+        }
+      }
+
+      // Merge all successful batches into the shared payload only after required data succeeded.
+      window.GOOGLE_SHEET_RAW_PAYLOAD=mergeGoogleSheetPayload(previousPayload,workingPayload);
+      window.dispatchEvent(new CustomEvent('googleSheetPayloadReady',{
+        detail:window.GOOGLE_SHEET_RAW_PAYLOAD
+      }));
+
+      const normalized=normalizeGooglePayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
       Object.assign(FORECAST_DATA,normalized);
       DASHBOARD_DATA=normalized.dashboardData||null;
       QIDDIYA_DATA=normalized.qiddiyaData||null;
       window.BANK_BALANCE_DATA=normalized.bankBalanceData||[];
-      if(!forecastSheets().some(s=>s.sheet===currentForecastSheet))currentForecastSheet='GROUP';
+
+      if(!forecastSheets().some(s=>s.sheet===currentForecastSheet)){
+        currentForecastSheet='GROUP';
+      }
+
       const stamp=new Date().toLocaleString();
-      setGoogleNotes('Google Sheet data updated at '+stamp+' (compatibility mode)');
+      localStorage.setItem('cf_google_last_refresh',stamp);
+      localStorage.setItem('cf_google_last_scopes',JSON.stringify(completed));
+      localStorage.setItem('cf_google_last_failures',JSON.stringify(failures));
+
       refreshAll();
-      alert('Google Sheet data loaded in compatibility mode. Deploy the FIP 6.2.1 Apps Script for faster refreshes.');
-    }catch(fallbackError){
-      setGoogleNotes('Refresh failed: '+fallbackError.message);
-      alert('Could not refresh from Google Sheet: '+fallbackError.message);
+
+      window.dispatchEvent(new CustomEvent('fip:data-ready',{
+        detail:{
+          scope:'dashboard',
+          updatedAt:stamp,
+          payload:window.GOOGLE_SHEET_RAW_PAYLOAD,
+          completedScopes:completed,
+          failedScopes:failures
+        }
+      }));
+
+      if(failures.length){
+        const names=failures.map(x=>x.label).join(', ');
+        setGoogleNotes('Google Sheet updated at '+stamp+'. Some forecast batches could not refresh: '+names+'. Last available values were retained where possible.');
+        alert('Google Sheet data loaded with a warning. The following optional forecast batches failed: '+names+'. Existing values for those entities were retained.');
+      }else{
+        setGoogleNotes('Google Sheet data updated at '+stamp);
+        alert('Google Sheet dashboard data loaded successfully.');
+      }
+
+      return {ok:true,completed,failures};
+    }catch(error){
+      window.GOOGLE_SHEET_RAW_PAYLOAD=previousPayload;
+      const message=error&&error.message?error.message:String(error);
+      setGoogleNotes('Refresh failed: '+message);
+      alert('Could not refresh from Google Sheet: '+message);
+      return {ok:false,completed,failures,error:message};
+    }finally{
+      googleRefreshPromise=null;
     }
-  }
+  })();
+
+  return googleRefreshPromise;
 }
+window.refreshFromGoogleSheet=refreshFromGoogleSheet;
 function handleExcelImport(e){ alert('Excel import button is ready in the UI. For reliable live updates from GitHub, use the Google Apps Script JSON connection so the hosted HTML can refresh from your Google Sheet.'); e.target.value=''; }
 
 
