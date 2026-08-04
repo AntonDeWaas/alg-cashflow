@@ -1,3 +1,4 @@
+// FIP Analytics Engine v6.1
 (function(global){
 'use strict';
 const A={
