@@ -254,7 +254,23 @@
       </div>`;
 
     const refresh = host.querySelector('[data-bank-loan-refresh]');
-    if (refresh) refresh.addEventListener('click', () => module.load(true));
+    if (refresh) refresh.addEventListener('click', async () => {
+      refresh.disabled = true;
+      refresh.textContent = 'Refreshing…';
+      try {
+        if (typeof window.refreshFromGoogleSheet === 'function') {
+          await window.refreshFromGoogleSheet();
+          const matrix = matrixFromSharedPayload();
+          if (matrix) module.setData(matrix);
+          else await module.load(true);
+        } else {
+          await module.load(true);
+        }
+      } finally {
+        refresh.disabled = false;
+        refresh.textContent = 'Refresh debt summary';
+      }
+    });
     return true;
   }
 
@@ -265,6 +281,14 @@
     const host = contentHost(container);
     host.innerHTML = `<div class="bl-status ${error ? 'bl-error' : ''}">${escapeHtml(message)}</div>`;
     return true;
+  }
+
+  function sharedPayload() {
+    return window.GOOGLE_SHEET_RAW_PAYLOAD || window.DASHBOARD_DATA_RAW || null;
+  }
+
+  function matrixFromSharedPayload(payload) {
+    return extractSheet(payload || sharedPayload());
   }
 
   function getApiUrl() {
@@ -310,17 +334,46 @@
   async function fetchMatrix(force) {
     if (!force && cachedMatrix) return cachedMatrix;
     if (!force && loadingPromise) return loadingPromise;
+
+    // First use the payload already loaded by app.js.
+    const existing = matrixFromSharedPayload();
+    if (existing) {
+      cachedMatrix = existing;
+      return cachedMatrix;
+    }
+
+    // Ask the shared app.js connector for the summary scope.
+    // This avoids a duplicate standalone JSONP request.
+    if (typeof window.loadGoogleSheetScope === 'function') {
+      loadingPromise = window.loadGoogleSheetScope('summary', { force: Boolean(force) })
+        .then(payload => {
+          const matrix = matrixFromSharedPayload(payload);
+          if (!matrix) {
+            throw new Error('The shared summary response does not include the "Debt Summary" tab.');
+          }
+          cachedMatrix = matrix;
+          return matrix;
+        })
+        .finally(() => { loadingPromise = null; });
+
+      return loadingPromise;
+    }
+
+    // Safe fallback for older app.js versions: use the configured API with summary scope.
     const url = getApiUrl();
     if (!url) throw new Error('Google Sheet API URL is not configured.');
 
-    loadingPromise = loadJsonp(url).then(payload => {
-      const matrix = extractSheet(payload);
-      if (!matrix) {
-        throw new Error('The API response does not include the "Debt Summary" tab. Add that tab to the Apps Script export list, then redeploy the web app.');
-      }
-      cachedMatrix = matrix;
-      return matrix;
-    }).finally(() => { loadingPromise = null; });
+    const scopedUrl = url + (url.includes('?') ? '&' : '?') + 'scope=summary';
+    loadingPromise = loadJsonp(scopedUrl)
+      .then(payload => {
+        const matrix = extractSheet(payload);
+        if (!matrix) {
+          throw new Error('The summary response does not include the "Debt Summary" tab.');
+        }
+        cachedMatrix = matrix;
+        return matrix;
+      })
+      .finally(() => { loadingPromise = null; });
 
     return loadingPromise;
   }
@@ -348,7 +401,12 @@
         this.render(matrix);
       } catch (error) {
         console.error('[BANK_LOAN_MODULE]', error);
+        if (cachedMatrix) {
+          this.render(cachedMatrix);
+          return false;
+        }
         renderStatus(error && error.message ? error.message : 'Unable to load Debt Summary.', true);
+        return false;
       }
     }
   };
@@ -361,8 +419,30 @@
     setTimeout(() => module.load(false), 0);
   });
 
+  window.addEventListener('googleSheetPayloadReady', event => {
+    const matrix = matrixFromSharedPayload(event && event.detail);
+    if (!matrix) return;
+    cachedMatrix = matrix;
+    if (findContainer()) module.render(matrix);
+  });
+
+  // Compatibility event for future FIP connector releases.
+  window.addEventListener('fip:data-ready', event => {
+    const matrix = matrixFromSharedPayload(event && event.detail);
+    if (!matrix) return;
+    cachedMatrix = matrix;
+    if (findContainer()) module.render(matrix);
+  });
+
   function boot() {
-    if (findContainer()) module.load(false);
+    if (!findContainer()) return;
+    const matrix = matrixFromSharedPayload();
+    if (matrix) {
+      cachedMatrix = matrix;
+      module.render(matrix);
+    } else {
+      module.load(false);
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(boot, 250));
