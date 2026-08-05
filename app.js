@@ -47,6 +47,9 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+window.FIP_APP_RUNTIME_VERSION='6.5.1';
+document.documentElement.setAttribute('data-fip-app-version','6.5.1');
+
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
   const neg=n<0; const v=Math.abs(n);
@@ -941,183 +944,91 @@ function liquidityInitialOpening(){
   return Number(first.opening)||0;
 }
 function liquidityDetailPeriodRows(){
-  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
-  const periods = group.periods || [];
-  const rows = [];
+  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const periods=group.periods||[];
+  if(!periods.length) return {periods:[],rows:[]};
 
-  const addRow = (label, values, type = 'line') => {
-    rows.push({ label, values, type });
+  const basis=(localStorage.getItem('cf_liquidity_basis')||'operational');
+  const operational=basis!=='group';
+  const adjusted=periods.map((p,i)=>liquidityAtPeriodIndex(i));
+  const rows=[];
+  const add=(label,values,type='line',groupName='Other')=>{
+    rows.push({label,values,type,groupName});
   };
 
-  if (!periods.length) {
-    return { periods: [], rows: [] };
-  }
+  const openingGroup=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
+  const inflowGroup=groupRowValues(/^Total Inflows$/i);
+  const outflowGroup=groupRowValues(/^Total Outflows$/i);
+  const closingGroup=groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
 
-  /*
-   * Base adjusted data:
-   * ALG-CB less the corresponding Qiddiya Balance figures.
-   */
-  const adj = periods.map((p, i) => liquidityAtPeriodIndex(i));
-
-  /*
-   * Restricted Cash – Qiddiya Project:
-   * Read B13 through qiddiyaVatDisplayBenefit().
-   * Keep its original positive or negative sign.
-   */
-  const restrictedCash = qiddiyaVatDisplayBenefit();
-  const reportDate = reportingDateObject();
-
-const currentMonth = reportDate
-  ? reportDate.toLocaleString('en-US', { month: 'short' })
-  : '';
-
-  let restrictedIdx = periods.findIndex(p =>
-    String(p.month || p.header || '').slice(0, 3) === currentMonth &&
-    /Forecast/i.test(
-      cleanText(p.period || p.header || p.key || '')
-    )
+  add(
+    operational?'Estimated Cash Balance Opening (Excl. Qiddiya)':'Estimated Cash Balance Opening',
+    periods.map((_,i)=>operational?(Number(adjusted[i].opening)||0):(Number(openingGroup[i])||0)),
+    'total','Cash Position'
   );
 
-  /*
-   * Fallback if the current-month Forecast column was not identified.
-   */
-  if (restrictedIdx < 0) {
-    restrictedIdx = periods.findIndex(p =>
-      /Forecast/i.test(
-        cleanText(p.period || p.header || p.key || '')
-      )
-    );
-  }
+  let currentGroup='Other';
+  const sectionMap=[
+    [/Estimated Cash Inflows/i,'Inflows'],
+    [/Estimated Cash Outflows/i,'Outflows'],
+    [/^Suppliers$/i,'Supplier Payments'],
+    [/Payment Of Operating|Fixed Cash/i,'Fixed Cash Expenses'],
+    [/Variable Cash/i,'Variable Cash Expenses'],
+    [/^Capex$/i,'Capex']
+  ];
 
-  const restrictedVals = periods.map((_, i) =>
-    i === restrictedIdx ? Number(restrictedCash) || 0 : 0
-  );
+  (group.rows||[]).forEach(r=>{
+    const label=cleanText(r.label||'');
+    if(!label) return;
 
-  /*
-   * The ALG-CB Total Outflows row currently excludes the separate
-   * Total Supplier Payments subtotal, so include that subtotal.
-   */
-  const supplierTotal = groupRowValues(/^Total Supplier Payments$/i);
+    if(r.type==='section'){
+      const found=sectionMap.find(x=>x[0].test(label));
+      if(found) currentGroup=found[1];
+      add(label,periods.map(()=>null),'section',currentGroup);
+      return;
+    }
 
-  const totalInflows = adj.map((x, i) =>
-    (Number(x.inflows) || 0) +
-    (Number(restrictedVals[i]) || 0)
-  );
+    if(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)) return;
+    if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
 
-  const totalOutflows = adj.map((x, i) =>
-    (Number(x.outflows) || 0) +
-    (Number(supplierTotal[i]) || 0)
-  );
+    if(operational && /Project Qiddiya (Inflow|Outflow)/i.test(label)) return;
 
-  /*
-   * Each displayed ALG-CB column is calculated independently against the
-   * matching Qiddiya Balance column. Monthly TOT columns remain summaries;
-   * they are not inserted into a rolling weekly chain.
-   *
-   * Closing is reconciled to the displayed movements, including the separate
-   * Total Supplier Payments subtotal, so Opening + Inflows - Outflows always
-   * agrees with Closing for weekly, forecast and monthly TOT columns.
-   */
-  const isGrandTotal = p =>
-    /^Total$/i.test(cleanText(p.month || p.header || ''));
+    if(/^Total Inflows$/i.test(label)){
+      add(
+        operational?'Total Inflows (Excl. Qiddiya)':'Total Inflows',
+        periods.map((_,i)=>operational?(Number(adjusted[i].inflows)||0):(Number(inflowGroup[i])||0)),
+        'total','Inflows'
+      );
+      return;
+    }
 
-  const openingValues = adj.map(x => Number(x.opening) || 0);
-  const closingValues = periods.map((p, i) => {
-    if (isGrandTotal(p)) return Number(adj[i].closing) || 0;
-    return (Number(openingValues[i]) || 0) +
-      (Number(totalInflows[i]) || 0) -
-      (Number(totalOutflows[i]) || 0);
+    if(/^Total Outflows$/i.test(label)){
+      add(
+        operational?'Total Outflows (Excl. Qiddiya)':'Total Outflows',
+        periods.map((_,i)=>operational?(Number(adjusted[i].outflows)||0):(Number(outflowGroup[i])||0)),
+        'total','Outflows'
+      );
+      return;
+    }
+
+    const values=periods.map((_,i)=>Number((r.values||[])[i])||0);
+    if(!values.some(v=>v!==0)) return;
+    add(label,values,r.type||'line',currentGroup);
   });
 
-  addRow(
-    'Estimated Cash Balance Opening',
-    openingValues,
-    'total'
+  /*
+   * Critical reconciliation rule:
+   * Operational closing = ALG-CB closing - Qiddiya Balance closing.
+   * Do not rebuild closing from displayed detail rows because that can double
+   * count subtotals and produced the incorrect Jan 1-13 value of 54,928.
+   */
+  add(
+    operational?'Estimated Cash Balance Closing (Excl. Qiddiya)':'Estimated Cash Balance Closing',
+    periods.map((_,i)=>operational?(Number(adjusted[i].closing)||0):(Number(closingGroup[i])||0)),
+    'total','Cash Position'
   );
 
-  const important =
-    /Estimated Cash|Total Inflows|Total Outflows|Collections|Debt Aging|Projected|Advance|Returned|Intercompany|Borrowings|Others|Supplier|Sub Contractors|Proj Exp|Payment for Fixed Services|Payments in Advance|Forecast for supplier|Salaries|Manpower|Telecommunication|Utility|Rent|Auto Loan|Mortgage|Term Loan|Salik|Rta|Fuel|Visa|Bank Charges|Restricted cash|Vat|Tax|Trade License|Sponsorship|Audit|Insurance|Credit Cards|Petty Cash|IT|Bonus|Final Sett|Loans|Staff Ticket|Entertainment|Marketing|Legal|Dividend|Capex|Capital Expenses/i;
-
-  (group.rows || []).forEach(r => {
-    const label = cleanText(r.label || '');
-
-    if (!label) return;
-
-    /*
-     * Qiddiya is handled through the Qiddiya Balance adjustment,
-     * so do not repeat its original ALG-CB lines.
-     */
-    if (/Project Qiddiya Inflow/i.test(label)) return;
-    if (/Project Qiddiya Outflow/i.test(label)) return;
-
-    if (
-      /Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)
-    ) return;
-
-    if (
-      /Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)
-    ) return;
-
-    if (/^Total Inflows$/i.test(label)) {
-      if (restrictedIdx >= 0 && Number(restrictedCash) !== 0) {
-        addRow(
-          'Restricted Cash – Qiddiya Project',
-          restrictedVals,
-          'line'
-        );
-      }
-
-      addRow(
-        'Total Inflows (excluding Qiddiya)',
-        totalInflows,
-        'total'
-      );
-
-      return;
-    }
-
-    if (/^Total Outflows$/i.test(label)) {
-      addRow(
-        'Total Outflows (excluding Qiddiya)',
-        totalOutflows,
-        'total'
-      );
-
-      return;
-    }
-
-    if (r.type === 'section') {
-      if (
-        /Estimated Cash Inflows|Estimated Cash Outflows|Suppliers|Payment Of Operating|Fixed Cash|Variable Cash|Capex/i.test(label)
-      ) {
-        addRow(
-          label,
-          periods.map(() => null),
-          'section'
-        );
-      }
-
-      return;
-    }
-
-    if (!important.test(label)) return;
-
-    const vals = periods.map((p, i) =>
-      Number((r.values || [])[i]) || 0
-    );
-
-    if (vals.some(v => Number(v) !== 0)) {
-      addRow(label, vals, r.type || 'line');
-    }
-  });
-
-  addRow(
-    'Estimated Cash Balance Closing',
-    closingValues,
-    'total'
-  );
-
-  return { periods, rows };
+  return {periods,rows,basis};
 }
 function liquidityDetailPeriodRows_backup(){
   const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
@@ -1182,70 +1093,272 @@ function liquidityDetailPeriodRows_backup(){
 }
 function liquidityColumnSelection(periods){
   const modeEl=$('liquidityViewMode');
-  const mode=modeEl?modeEl.value:'current';
-  const monthOrder={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-  const isTot=(p)=>/\bTOT\b|^Total$/i.test(cleanText(p.period||p.header||p.key||''));
-  const isForecast=(p)=>/Forecast/i.test(cleanText(p.period||p.header||p.key||''));
+  const mode=modeEl?modeEl.value:(localStorage.getItem('cf_liquidity_time_view')||'weekly');
+  localStorage.setItem('cf_liquidity_time_view',mode);
+
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthOrder=Object.fromEntries(months.map((m,i)=>[m,i]));
+  const isTot=p=>/\bTOT\b|^Total$/i.test(cleanText(p.period||p.header||p.key||''));
   const byMonth={};
-  periods.forEach((p,i)=>{ const m=String(p.month||p.header||'').slice(0,3); if(monthOrder[m]!==undefined){ if(!byMonth[m]) byMonth[m]=[]; byMonth[m].push(i); } });
-  const totIdxFor=(m)=> (byMonth[m]||[]).find(i=>isTot(periods[i]));
-  if(mode==='weekly'){
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows all weekly, forecast and total columns exactly as read from ALG-CB.';
-    return periods.map((_,i)=>i);
-  }
-  if(mode==='monthly'){
-    const selected=[];
-    Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly TOT Only shows only the monthly total columns for quick management review.';
-    return selected.length?selected:periods.map((_,i)=>i);
-  }
-  // Current reporting period: completed months = TOT, current month = weekly columns up to reporting date + forecast + TOT, future months = TOT
-  const rpt=getCurrentReportingPeriodInfo();
-  if(!rpt){
-    const selected=[]; Object.keys(monthOrder).forEach(m=>{ const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx); });
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period could not find a reporting date, so monthly totals are shown.';
-    return selected.length?selected:periods.map((_,i)=>i);
-  }
-  const curMonth=String(rpt.period.month||rpt.period.header||'').slice(0,3);
-  const curOrder=monthOrder[curMonth];
-  const selected=[];
-  Object.keys(monthOrder).forEach(m=>{
-    const mOrder=monthOrder[m];
-    const indices=byMonth[m]||[];
-    if(!indices.length) return;
-    if(mOrder<curOrder || mOrder>curOrder){
-      const idx=totIdxFor(m); if(idx!==undefined) selected.push(idx);
-      return;
-    }
-    // Current month: show weekly/current columns up to reporting period, plus forecast and total.
-    indices.forEach(i=>{
-      const p=periods[i];
-      if(i<=rpt.index || isForecast(p) || isTot(p)) selected.push(i);
-    });
+  periods.forEach((p,i)=>{
+    const m=String(p.month||p.header||'').slice(0,3);
+    if(monthOrder[m]===undefined)return;
+    (byMonth[m]||(byMonth[m]=[])).push(i);
   });
-  if($('liquidityViewNote')) $('liquidityViewNote').textContent='Current Reporting Period shows completed months as totals, the active month by week/forecast, and future months as totals.';
-  return [...new Set(selected)].filter(i=>i>=0 && i<periods.length).sort((a,b)=>a-b);
+  const totalIndex=m=>{
+    const list=byMonth[m]||[];
+    return list.find(i=>isTot(periods[i])) ?? list[list.length-1];
+  };
+
+  if(mode==='weekly'){
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows every ALG-CB period. Use Cash Basis to switch between Group Cash and Operational Cash excluding Qiddiya.';
+    return periods.map((_,i)=>i).filter(i=>!/^Total$/i.test(cleanText(periods[i].month||periods[i].header||'')));
+  }
+
+  if(mode==='monthly'){
+    const selected=months.map(totalIndex).filter(i=>Number.isInteger(i));
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly View shows one total column per month.';
+    return selected;
+  }
+
+  /*
+   * Current Period:
+   * Prefer an exact reporting-period match. If source headings do not contain
+   * an exact date, use the reporting month and display that month's weekly
+   * columns plus its monthly total. This prevents Current Period from silently
+   * becoming identical to Monthly View.
+   */
+  const exact=getCurrentReportingPeriodInfo();
+  let currentMonth=exact?String(exact.period.month||exact.period.header||'').slice(0,3):'';
+  if(!currentMonth){
+    const dt=reportingDateObject();
+    if(dt) currentMonth=dt.toLocaleString('en-US',{month:'short'});
+  }
+  if(!currentMonth || !byMonth[currentMonth]){
+    const firstDetailed=months.find(m=>(byMonth[m]||[]).some(i=>!isTot(periods[i])));
+    currentMonth=firstDetailed||months.find(m=>byMonth[m])||'';
+  }
+
+  const selected=(byMonth[currentMonth]||[]).slice();
+  if($('liquidityViewNote')){
+    $('liquidityViewNote').textContent=currentMonth
+      ? `Current Reporting Period shows ${currentMonth} weekly/detail columns and the ${currentMonth} total.`
+      : 'Current Reporting Period could not be determined; Weekly Detail is shown.';
+  }
+  return selected.length?selected:periods.map((_,i)=>i);
+}
+function liquidityRowClass(label){
+  const s=cleanText(label).toLowerCase();
+  if(/closing|opening/.test(s))return 'liq-cash-row';
+  if(/total inflow/.test(s))return 'liq-inflow-total';
+  if(/total outflow/.test(s))return 'liq-outflow-total';
+  if(/inflow|collection|advance|borrow|receipt/.test(s))return 'pos';
+  if(/outflow|supplier|payment|salary|rent|loan|tax|insurance|credit|capex|expense|fee/.test(s))return 'neg';
+  return '';
+}
+function liquidityGrandValue(row){
+  const vals=(row.values||[]).map(v=>Number(v)||0);
+  const label=cleanText(row.label);
+  if(/opening/i.test(label))return vals[0]||0;
+  if(/closing/i.test(label)){
+    for(let i=vals.length-1;i>=0;i--)if(Number.isFinite(vals[i]))return vals[i]||0;
+    return 0;
+  }
+  return vals.reduce((a,b)=>a+b,0);
 }
 function renderLiquidityPeriodTable(){
   const pack=liquidityDetailPeriodRows();
   const periods=pack.periods||[];
   const detailRows=pack.rows||[];
-  if(!periods.length || !detailRows.length) return '<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance tabs.</div>';
+  if(!periods.length||!detailRows.length){
+    return '<div class="empty">Refresh Google Sheet after Apps Script includes ALG-CB and Qiddiya Balance.</div>';
+  }
+
   const selected=liquidityColumnSelection(periods);
+  const basis=pack.basis||'operational';
+  const search=cleanText(localStorage.getItem('cf_liquidity_search')||'').toLowerCase();
+  const collapsed=JSON.parse(localStorage.getItem('cf_liquidity_collapsed')||'{}');
+
   const shownPeriods=selected.map(i=>periods[i]);
-  const headers=shownPeriods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('')+'<th>Total / Closing</th>';
-  const body=detailRows.map(r=>{
-    if(r.type==='section') return `<tr class="section"><td colspan="${shownPeriods.length+2}">${escapeHtml(r.label)}</td></tr>`;
-    const lc=(r.label||'').toLowerCase();
-    const klass=(/inflow|collections|advance|borrowings|receipts|others/.test(lc) && !/outflow/.test(lc))?'pos':(/outflow|suppliers|proj|salaries|manpower|rent|loan|visa|tax|insurance|credit|dividend|capex|payments|variables|guarantees/.test(lc)?'neg':'');
-    const allVals=(r.values||[]).map(v=>Number(v)||0);
-    const vals=selected.map(i=>allVals[i]||0);
-    const lastVal=allVals.length?allVals[allVals.length-1]:0;
-    const total=/opening/i.test(r.label)?(allVals[0]||0):(/closing|balance closing/i.test(r.label)?lastVal:(/outflow|inflow|collections|others|payments|salaries|supplier|capex|dividend|rent|loan|tax|insurance|credit/i.test(lc)?allVals.reduce((a,b)=>a+b,0):0));
-    const rowClass=r.type==='total'?' class="total"':'';
-    return `<tr${rowClass}><td class="rowhead">${escapeHtml(r.label)}</td>${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}<td class="num ${klass}">${fmt(total)}</td></tr>`;
-  }).join('');
-  return `<table class="sticky-report"><thead><tr><th>Cash flow excluding Qiddiya</th>${headers}</tr></thead><tbody>${body}</tbody></table>`;
+  const headers=shownPeriods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('');
+
+  let activeGroup='Other';
+  const body=[];
+  detailRows.forEach((r,rowIndex)=>{
+    if(r.type==='section'){
+      activeGroup=r.groupName||r.label||'Other';
+      const key=encodeURIComponent(activeGroup);
+      const isCollapsed=Boolean(collapsed[activeGroup]);
+      body.push(`<tr class="section liq-group-row" data-liq-group-toggle="${key}">
+        <td class="rowhead" colspan="${shownPeriods.length+2}">
+          <button type="button" class="liq-group-button">
+            <span>${isCollapsed?'▶':'▼'}</span>
+            <strong>${escapeHtml(r.label)}</strong>
+          </button>
+        </td>
+      </tr>`);
+      return;
+    }
+
+    const matches=!search || cleanText(r.label).toLowerCase().includes(search);
+    const hidden=Boolean(collapsed[r.groupName||activeGroup]) || !matches;
+    const vals=selected.map(i=>Number((r.values||[])[i])||0);
+    const klass=liquidityRowClass(r.label);
+    const total=liquidityGrandValue(r);
+    body.push(`<tr class="${r.type==='total'?'total ':''}${klass} liq-data-row" data-liq-group="${escapeHtml(r.groupName||activeGroup)}"${hidden?' hidden':''}>
+      <td class="rowhead">${escapeHtml(r.label)}</td>
+      ${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}
+      <td class="num ${klass}">${fmt(total)}</td>
+    </tr>`);
+  });
+
+  const title=basis==='group'?'Group Cash Flow (Including Qiddiya)':'Operational Cash Flow (Excluding Qiddiya)';
+  return `
+    <div class="liq-command-table">
+      <div class="liq-top-scroll" aria-label="Top horizontal scrollbar"><div></div></div>
+      <div class="liq-main-scroll">
+        <table class="sticky-report liq-report-table">
+          <thead><tr><th>${escapeHtml(title)}</th>${headers}<th>Total / Closing</th></tr></thead>
+          <tbody>${body.join('')}</tbody>
+        </table>
+      </div>
+      <div class="liq-bottom-scroll" aria-label="Bottom horizontal scrollbar"><div></div></div>
+    </div>`;
+}
+function ensureLiquidityCommandCentre(){
+  if(!$('liquiditySummary'))return;
+
+  const mode=$('liquidityViewMode');
+  if(mode){
+    const wanted=[
+      ['weekly','Weekly Detail'],
+      ['monthly','Monthly Totals'],
+      ['current','Current Reporting Period']
+    ];
+    if(mode.options.length!==wanted.length || [...mode.options].some((o,i)=>o.value!==wanted[i][0])){
+      mode.innerHTML=wanted.map(x=>`<option value="${x[0]}">${x[1]}</option>`).join('');
+    }
+    mode.value=localStorage.getItem('cf_liquidity_time_view')||mode.value||'weekly';
+    if(!mode.dataset.liqBound){
+      mode.addEventListener('change',()=>{
+        localStorage.setItem('cf_liquidity_time_view',mode.value);
+        renderLiquidityView();
+      });
+      mode.dataset.liqBound='1';
+    }
+  }
+
+  let toolbar=$('liquidityCommandToolbar');
+  if(!toolbar){
+    toolbar=document.createElement('div');
+    toolbar.id='liquidityCommandToolbar';
+    toolbar.className='liq-command-toolbar';
+    const host=(mode&&mode.parentElement)?mode.parentElement:$('liquiditySummary').parentElement;
+    host.appendChild(toolbar);
+  }
+
+  const basis=localStorage.getItem('cf_liquidity_basis')||'operational';
+  const search=localStorage.getItem('cf_liquidity_search')||'';
+  toolbar.innerHTML=`
+    <div class="liq-control-group">
+      <span class="liq-control-label">Cash Basis</span>
+      <div class="liq-segmented">
+        <button type="button" data-liq-basis="group" class="${basis==='group'?'active':''}">Group Cash</button>
+        <button type="button" data-liq-basis="operational" class="${basis!=='group'?'active':''}">Operational · Excl. Qiddiya</button>
+      </div>
+    </div>
+    <div class="liq-control-group liq-search-group">
+      <label class="liq-control-label" for="liquidityLineSearch">Find cash-flow line</label>
+      <input id="liquidityLineSearch" type="search" value="${escapeHtml(search)}" placeholder="Insurance, salary, supplier…">
+    </div>
+    <div class="liq-toolbar-actions">
+      <button type="button" data-liq-expand>Expand all</button>
+      <button type="button" data-liq-collapse>Collapse all</button>
+    </div>`;
+
+  toolbar.querySelectorAll('[data-liq-basis]').forEach(button=>{
+    button.onclick=()=>{
+      localStorage.setItem('cf_liquidity_basis',button.dataset.liqBasis);
+      renderLiquidityView();
+    };
+  });
+  const searchInput=toolbar.querySelector('#liquidityLineSearch');
+  let timer;
+  searchInput.oninput=()=>{
+    clearTimeout(timer);
+    timer=setTimeout(()=>{
+      localStorage.setItem('cf_liquidity_search',searchInput.value);
+      renderLiquidityView();
+    },180);
+  };
+  toolbar.querySelector('[data-liq-expand]').onclick=()=>{
+    localStorage.setItem('cf_liquidity_collapsed','{}');
+    renderLiquidityView();
+  };
+  toolbar.querySelector('[data-liq-collapse]').onclick=()=>{
+    const groups={};
+    (liquidityDetailPeriodRows().rows||[]).filter(r=>r.type==='section').forEach(r=>groups[r.groupName||r.label]=true);
+    localStorage.setItem('cf_liquidity_collapsed',JSON.stringify(groups));
+    renderLiquidityView();
+  };
+}
+function initLiquidityTableUX(){
+  const root=$('liquiditySummary');
+  if(!root)return;
+  const main=root.querySelector('.liq-main-scroll');
+  const top=root.querySelector('.liq-top-scroll');
+  const bottom=root.querySelector('.liq-bottom-scroll');
+  const table=root.querySelector('.liq-report-table');
+  if(!main||!top||!bottom||!table)return;
+
+  const width=table.scrollWidth;
+  top.firstElementChild.style.width=width+'px';
+  bottom.firstElementChild.style.width=width+'px';
+
+  let syncing=false;
+  const sync=(source)=>{
+    if(syncing)return;
+    syncing=true;
+    [main,top,bottom].forEach(x=>{if(x!==source)x.scrollLeft=source.scrollLeft;});
+    requestAnimationFrame(()=>syncing=false);
+  };
+  [main,top,bottom].forEach(x=>x.addEventListener('scroll',()=>sync(x),{passive:true}));
+
+  root.querySelectorAll('[data-liq-group-toggle]').forEach(row=>{
+    row.onclick=()=>{
+      const group=decodeURIComponent(row.dataset.liqGroupToggle);
+      const collapsed=JSON.parse(localStorage.getItem('cf_liquidity_collapsed')||'{}');
+      collapsed[group]=!collapsed[group];
+      localStorage.setItem('cf_liquidity_collapsed',JSON.stringify(collapsed));
+      renderLiquidityView();
+    };
+  });
+}
+function injectLiquidityCommandStyles(){
+  if(document.getElementById('fipLiquidity650Styles'))return;
+  const style=document.createElement('style');
+  style.id='fipLiquidity650Styles';
+  style.textContent=`
+.liq-command-toolbar{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:12px 0;padding:12px;background:#f7f4ed;border:1px solid #ddd4c6;border-radius:10px}
+.liq-control-group{display:flex;flex-direction:column;gap:5px}.liq-control-label{font-size:.72rem;font-weight:900;color:#53606c;text-transform:uppercase;letter-spacing:.05em}
+.liq-segmented{display:flex;border:1px solid #c9c1b5;border-radius:9px;overflow:hidden;background:#fff}.liq-segmented button{border:0;border-right:1px solid #d8d0c4;background:#fff;padding:8px 11px;font-weight:800;color:#29435d;cursor:pointer}.liq-segmented button:last-child{border-right:0}.liq-segmented button.active{background:#0c554a;color:#fff}
+.liq-search-group{min-width:260px;flex:1}.liq-search-group input{width:100%;border:1px solid #cbc3b7;border-radius:8px;padding:8px 10px;background:#fff}
+.liq-toolbar-actions{display:flex;gap:7px}.liq-toolbar-actions button{border:1px solid #cbc3b7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800;color:#29435d;cursor:pointer}
+.liq-command-table{border:1px solid #ddd5c8;border-radius:10px;overflow:hidden;background:#fff}
+.liq-main-scroll{max-height:650px;overflow:auto;scrollbar-gutter:stable both-edges}
+.liq-top-scroll,.liq-bottom-scroll{overflow-x:auto;overflow-y:hidden;height:16px;background:#f4f1ea}.liq-top-scroll>div,.liq-bottom-scroll>div{height:1px}
+.liq-report-table{min-width:max-content;border-collapse:separate;border-spacing:0}
+.liq-report-table thead th{position:sticky;top:0;z-index:22;background:#f2eee5!important;border-bottom:2px solid #c8bda9}
+.liq-report-table th:first-child,.liq-report-table td:first-child{position:sticky;left:0;z-index:15;min-width:320px;max-width:320px;background:#fbf8f1;box-shadow:5px 0 8px -7px rgba(0,0,0,.7)}
+.liq-report-table thead th:first-child{z-index:30;background:#efe9dd!important}
+.liq-report-table th:not(:first-child),.liq-report-table td:not(:first-child){min-width:112px}
+.liq-group-row td{position:sticky!important;left:0!important;z-index:17!important;background:#0b5549!important;color:#fff!important;padding:0!important;max-width:none!important}
+.liq-group-button{width:100%;display:flex;gap:9px;align-items:center;border:0;background:transparent;color:#fff;padding:9px 12px;text-align:left;cursor:pointer}
+.liq-report-table tr.total td{font-weight:900;background:#f7f0df;border-top:1px solid #d4c6a9}
+.liq-report-table tr.liq-cash-row td{background:#edf5ef;font-weight:900}
+.liq-report-table .pos{color:#08755e}.liq-report-table .neg{color:#b7392e}
+@media(max-width:800px){.liq-command-toolbar{align-items:stretch}.liq-control-group,.liq-toolbar-actions{width:100%}.liq-toolbar-actions button{flex:1}.liq-report-table th:first-child,.liq-report-table td:first-child{min-width:230px;max-width:230px}}`;
+  document.head.appendChild(style);
 }
 function liquidityDetailRows(){
   const group=FORECAST_DATA.group||{};
@@ -1354,6 +1467,8 @@ function qiddiyaCashAtReportingDate(){
 }
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
+  injectLiquidityCommandStyles();
+  ensureLiquidityCommandCentre();
   const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA;
   const adjusted=liquidityAdjustedSummary();
   const reportInfo=getCurrentReportingPeriodInfo();
@@ -1384,10 +1499,11 @@ const qiddiyaCash = qiddiyaCashByDate !== null ? qiddiyaCashByDate : (Number(las
     <tr><td class="rowhead">Group closing cash including Qiddiya at reporting date</td><td class="num">${fmt(groupCash)}</td></tr>
     <tr><td class="rowhead">Less: Qiddiya cash balance at reporting date</td><td class="num neg">${fmt(qiddiyaCash)}</td></tr>
     <tr><td class="rowhead">VAT recovery benefit / economic benefit (information only)</td><td class="num neg">${fmt(vatBenefit)}</td></tr>
-    <tr><td class="rowhead">Reporting date liquid closing cash</td><td class="num ${cls(liquidCash)}">${fmt(liquidCash)}</td></tr>
+    <tr><td class="rowhead">Operational closing cash (ALG-CB closing less Qiddiya closing)</td><td class="num ${cls(liquidCash)}">${fmt(liquidCash)}</td></tr>
   </tbody></table>`;
 
   $('liquiditySummary').innerHTML = renderLiquidityPeriodTable();
+  requestAnimationFrame(initLiquidityTableUX);
 
 
   const qsum=(qd&&qd.monthlySummary)||[];
@@ -1834,7 +1950,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.4.1',sheets:{}};
+  const workingPayload={version:'FIP-6.5.1',sheets:{}};
   const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -1985,7 +2101,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.4.1',sheets:{}};
+    const corePayload={version:'FIP-6.5.1',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');

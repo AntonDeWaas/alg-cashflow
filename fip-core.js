@@ -1,12 +1,17 @@
 (function(global){
 'use strict';
-const VERSION='6.4.1';
+const VERSION='6.5.1';
 
 function load(src){
   return new Promise((resolve,reject)=>{
-    if(document.querySelector(`script[data-fip="${src}"]`))return resolve();
-    const s=document.createElement('script');s.src=src;s.dataset.fip=src;
-    s.onload=resolve;s.onerror=()=>reject(new Error('Could not load '+src));
+    const key=src+'@'+VERSION;
+    if(document.querySelector(`script[data-fip="${key}"]`))return resolve();
+    const separator=src.includes('?')?'&':'?';
+    const s=document.createElement('script');
+    s.src=src+separator+'fip='+encodeURIComponent(VERSION);
+    s.dataset.fip=key;
+    s.onload=resolve;
+    s.onerror=()=>reject(new Error('Could not load '+src+' for FIP '+VERSION));
     document.head.appendChild(s);
   });
 }
@@ -67,7 +72,7 @@ function renderManager(){
   const cfg=global.FIP_CONFIG.data,status=global.FIP_CONFIG.status,r=rowsForConfig(cfg);
   const sourceStatus=status.error?'error':status.source;
   overlay.innerHTML=`<div class="fip-manager">
-    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.4.1 · Conversational Ask FIP</p></div><button data-close>×</button></header>
+    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.5.1 · Liquidity Command Centre</p></div><button data-close>×</button></header>
     <div class="fip-manager-toolbar">
       <div><strong>Configuration:</strong> ${global.FIP_COMPONENTS.statusBadge(sourceStatus)}
         <strong>Rules:</strong> ${global.FIP_COMPONENTS.statusBadge('loaded')}
@@ -126,7 +131,7 @@ function renderManager(){
 function managerButton(){
   let b=document.getElementById('fipManagerButton');
   if(!b){b=document.createElement('button');b.id='fipManagerButton';b.type='button';document.body.appendChild(b)}
-  b.innerHTML='<span>FIP</span><small>6.4.1</small>';b.title='Open FIP 6.4.1';b.onclick=renderManager;
+  b.innerHTML='<span>FIP</span><small>6.5.1</small>';b.title='Open FIP 6.5.1';b.onclick=renderManager;
 }
 function styles(){
   if(document.getElementById('fipManagerStyles'))document.getElementById('fipManagerStyles').remove();
@@ -174,7 +179,7 @@ async function boot(){
     global.dispatchEvent(new CustomEvent('fip:ready',{detail:global.FIP}));
     console.info('Al Laith Finance Intelligence Platform',VERSION,'ready');
   }catch(err){
-    console.error('FIP 6.2 boot failed',err);
+    console.error('FIP '+VERSION+' boot failed',err);
   }
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
