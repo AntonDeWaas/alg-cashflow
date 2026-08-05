@@ -1834,7 +1834,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.4.0',sheets:{}};
+  const workingPayload={version:'FIP-6.4.1',sheets:{}};
   const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -1985,7 +1985,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.4.0',sheets:{}};
+    const corePayload={version:'FIP-6.4.1',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
