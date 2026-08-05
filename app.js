@@ -47,8 +47,8 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-window.FIP_APP_RUNTIME_VERSION='6.5.1';
-document.documentElement.setAttribute('data-fip-app-version','6.5.1');
+window.FIP_APP_RUNTIME_VERSION='6.5.2';
+document.documentElement.setAttribute('data-fip-app-version','6.5.2');
 
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
@@ -764,11 +764,11 @@ function getGroupMonth(group, mon){
   return gsum.find(x=>x.month===mon)||{};
 }
 function qiddiyaVatBenefit(){
-  const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA||{};
+  const qd=liquidityQiddiyaSource();
   return Number(qd.vatBenefit)||0;
 }
 function qiddiyaVatDisplayBenefit(){
-  const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA||{};
+  const qd=liquidityQiddiyaSource();
   return Number(qd.vatDisplayBenefit)||Number(qd.vatBenefit)||0;
 }
 function vatBenefitTargetIndex(periods){
@@ -822,6 +822,50 @@ function liquidityAdjustedSummary(){
   });
 }
 
+
+function rawSheetByNames(names){
+  const sheets=(window.GOOGLE_SHEET_RAW_PAYLOAD&&window.GOOGLE_SHEET_RAW_PAYLOAD.sheets)||{};
+  for(const name of names){
+    if(Array.isArray(sheets[name]) && sheets[name].length) return sheets[name];
+  }
+  return null;
+}
+function liquidityGroupSource(){
+  const matrix=rawSheetByNames(['ALG-CB','ALG CB','ALGCB']);
+  if(matrix){
+    const parsed=parseForecastSheet('ALG-CB',matrix);
+    if(parsed) return parsed;
+  }
+  return FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+}
+function liquidityQiddiyaSource(){
+  const matrix=rawSheetByNames(['Qiddiya Balance','QIDDIYA BALANCE','QiddiyaBalance']);
+  if(matrix){
+    const parsed=parseQiddiyaBalance(matrix);
+    if(parsed) return parsed;
+  }
+  return FORECAST_DATA.qiddiyaData || QIDDIYA_DATA || {};
+}
+function periodDateCandidates(p){
+  const values=[
+    p&&p.period,
+    p&&p.header,
+    p&&p.key,
+    [p&&p.header,p&&p.period].filter(Boolean).join(' ')
+  ].map(cleanText).filter(Boolean);
+  const out=[];
+  values.forEach(text=>{
+    const direct=parsePeriodDate(text);
+    if(direct) out.push(direct);
+    const matches=text.match(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g)||[];
+    matches.forEach(x=>{
+      const dt=parsePeriodDate(x);
+      if(dt) out.push(dt);
+    });
+  });
+  return out;
+}
+
 function parsePeriodDate(text){
   text=cleanText(text||'');
   if(!text) return null;
@@ -846,44 +890,34 @@ function periodShortLabel(p){
   return p.header||mon||'';
 }
 function getCurrentReportingPeriodInfo(){
-  const group = FORECAST_DATA.algCb || FORECAST_DATA.group || {};
-  const periods = group.periods || [];
-  const rptDate = parsePeriodDate(reportDateDisplay());
+  const group=liquidityGroupSource();
+  const periods=group.periods||[];
+  const rptDate=reportingDateObject();
+  if(!periods.length||!rptDate) return null;
 
-  if (!periods.length || !rptDate) return null;
-
-  let chosen = null;
-
-  periods.forEach((p, i) => {
-    const dt = parsePeriodDate(p.period || p.key || '');
-    if (!dt) return;
-
-    if (
-      dt.getFullYear() === rptDate.getFullYear() &&
-      dt.getMonth() === rptDate.getMonth() &&
-      dt.getDate() === rptDate.getDate()
-    ) {
-      chosen = {
-        index: i,
-        period: p,
-        date: dt,
-        label: periodShortLabel(p)
-      };
-    }
+  const exact=[];
+  const prior=[];
+  periods.forEach((p,i)=>{
+    periodDateCandidates(p).forEach(dt=>{
+      const item={index:i,period:p,date:dt,label:periodShortLabel(p)};
+      if(sameDay(dt,rptDate)) exact.push(item);
+      else if(dt.getTime()<=rptDate.getTime()) prior.push(item);
+    });
   });
-
-  return chosen;
+  if(exact.length) return exact[exact.length-1];
+  prior.sort((a,b)=>b.date-a.date || b.index-a.index);
+  return prior[0]||null;
 }
 function groupRowValues(pattern){
-  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const group=liquidityGroupSource();
   const row=(group.rows||[]).find(r=>pattern.test(cleanText(r.label||'')));
   return row?(row.values||[]):[];
 }
 function liquidityAtPeriodIndex(idx){
-  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const group=liquidityGroupSource();
   const p=(group.periods||[])[idx]||{};
   const mon=String(p.month||p.header||'').slice(0,3);
-  const qd=FORECAST_DATA.qiddiyaData||QIDDIYA_DATA||{};
+  const qd=liquidityQiddiyaSource();
   const qsum=qd.monthlySummary||[];
 
   /*
@@ -894,14 +928,26 @@ function liquidityAtPeriodIndex(idx){
   const norm=v=>cleanText(v||'').toLowerCase().replace(/\s+/g,' ').trim();
   const pHeader=norm(p.header||p.month||'');
   const pPeriod=norm(p.period||'');
-  let q=qsum[idx]||{};
-  const qHeader=norm(q.header||q.month||'');
-  const qPeriod=norm(q.period||'');
-  const indexLooksAligned=(
-    (!pHeader || !qHeader || pHeader.slice(0,3)===qHeader.slice(0,3)) &&
-    (!pPeriod || !qPeriod || pPeriod===qPeriod)
-  );
-  if(!indexLooksAligned){
+  const reportDates=periodDateCandidates(p);
+
+  let q={};
+  if(reportDates.length){
+    const exactIndex=qsum.findIndex(item=>
+      periodDateCandidates(item).some(qd=>reportDates.some(pd=>sameDay(pd,qd)))
+    );
+    if(exactIndex>=0) q=qsum[exactIndex]||{};
+  }
+  if(!Object.keys(q).length){
+    const direct=qsum[idx]||{};
+    const qHeader=norm(direct.header||direct.month||'');
+    const qPeriod=norm(direct.period||'');
+    const aligned=(
+      (!pHeader||!qHeader||pHeader.slice(0,3)===qHeader.slice(0,3)) &&
+      (!pPeriod||!qPeriod||pPeriod===qPeriod)
+    );
+    if(aligned) q=direct;
+  }
+  if(!Object.keys(q).length){
     q=qsum.find(x=>{
       const xHeader=norm(x.header||x.month||'');
       const xPeriod=norm(x.period||'');
@@ -944,7 +990,7 @@ function liquidityInitialOpening(){
   return Number(first.opening)||0;
 }
 function liquidityDetailPeriodRows(){
-  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const group=liquidityGroupSource();
   const periods=group.periods||[];
   if(!periods.length) return {periods:[],rows:[]};
 
@@ -1031,7 +1077,7 @@ function liquidityDetailPeriodRows(){
   return {periods,rows,basis};
 }
 function liquidityDetailPeriodRows_backup(){
-  const group=FORECAST_DATA.algCb || FORECAST_DATA.group || {};
+  const group=liquidityGroupSource();
   const periods=(group.periods||[]);
   const rows=[];
   const addRow=(label, values, type='line')=>rows.push({label,values,type});
@@ -1097,55 +1143,57 @@ function liquidityColumnSelection(periods){
   localStorage.setItem('cf_liquidity_time_view',mode);
 
   const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthOrder=Object.fromEntries(months.map((m,i)=>[m,i]));
-  const isTot=p=>/\bTOT\b|^Total$/i.test(cleanText(p.period||p.header||p.key||''));
+  const monthOf=p=>{
+    const text=cleanText([p.month,p.header,p.key].filter(Boolean).join(' '));
+    const m=text.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/i);
+    return m?m[1][0].toUpperCase()+m[1].slice(1,3).toLowerCase():'';
+  };
+  const isTot=p=>/\bTOT\b|Monthly Total|Month Total/i.test(cleanText(
+    [p.period,p.header,p.key].filter(Boolean).join(' ')
+  ));
+  const isYearTotal=p=>/^Total$/i.test(cleanText(p.month||p.header||p.key||''));
+
   const byMonth={};
   periods.forEach((p,i)=>{
-    const m=String(p.month||p.header||'').slice(0,3);
-    if(monthOrder[m]===undefined)return;
-    (byMonth[m]||(byMonth[m]=[])).push(i);
+    const mon=monthOf(p);
+    if(mon)(byMonth[mon]||(byMonth[mon]=[])).push(i);
   });
-  const totalIndex=m=>{
-    const list=byMonth[m]||[];
-    return list.find(i=>isTot(periods[i])) ?? list[list.length-1];
-  };
 
   if(mode==='weekly'){
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Weekly Detail shows every ALG-CB period. Use Cash Basis to switch between Group Cash and Operational Cash excluding Qiddiya.';
-    return periods.map((_,i)=>i).filter(i=>!/^Total$/i.test(cleanText(periods[i].month||periods[i].header||'')));
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent=
+      'Weekly Detail reads every physical ALG-CB weekly/date column and monthly total from the latest Google Sheet payload.';
+    return periods.map((_,i)=>i).filter(i=>!isYearTotal(periods[i]));
   }
 
   if(mode==='monthly'){
-    const selected=months.map(totalIndex).filter(i=>Number.isInteger(i));
-    if($('liquidityViewNote')) $('liquidityViewNote').textContent='Monthly View shows one total column per month.';
+    const selected=[];
+    months.forEach(mon=>{
+      const indexes=byMonth[mon]||[];
+      if(!indexes.length)return;
+      const totals=indexes.filter(i=>isTot(periods[i]));
+      selected.push(totals.length?totals[totals.length-1]:indexes[indexes.length-1]);
+    });
+    if($('liquidityViewNote')) $('liquidityViewNote').textContent=
+      'Monthly Totals shows one source column per month and prefers the explicit TOT column.';
     return selected;
   }
 
-  /*
-   * Current Period:
-   * Prefer an exact reporting-period match. If source headings do not contain
-   * an exact date, use the reporting month and display that month's weekly
-   * columns plus its monthly total. This prevents Current Period from silently
-   * becoming identical to Monthly View.
-   */
-  const exact=getCurrentReportingPeriodInfo();
-  let currentMonth=exact?String(exact.period.month||exact.period.header||'').slice(0,3):'';
-  if(!currentMonth){
-    const dt=reportingDateObject();
-    if(dt) currentMonth=dt.toLocaleString('en-US',{month:'short'});
-  }
-  if(!currentMonth || !byMonth[currentMonth]){
-    const firstDetailed=months.find(m=>(byMonth[m]||[]).some(i=>!isTot(periods[i])));
-    currentMonth=firstDetailed||months.find(m=>byMonth[m])||'';
+  const rptDate=reportingDateObject();
+  const current=getCurrentReportingPeriodInfo();
+  const mon=rptDate?rptDate.toLocaleString('en-US',{month:'short'}):(current?monthOf(current.period):'');
+  const indexes=(byMonth[mon]||[]).slice();
+  const selected=[];
+  if(current)selected.push(current.index);
+  const totals=indexes.filter(i=>isTot(periods[i]));
+  if(totals.length && (!current || totals[totals.length-1]!==current.index)){
+    selected.push(totals[totals.length-1]);
   }
 
-  const selected=(byMonth[currentMonth]||[]).slice();
-  if($('liquidityViewNote')){
-    $('liquidityViewNote').textContent=currentMonth
-      ? `Current Reporting Period shows ${currentMonth} weekly/detail columns and the ${currentMonth} total.`
-      : 'Current Reporting Period could not be determined; Weekly Detail is shown.';
-  }
-  return selected.length?selected:periods.map((_,i)=>i);
+  const unique=[...new Set(selected)].filter(Number.isInteger);
+  if($('liquidityViewNote')) $('liquidityViewNote').textContent=unique.length
+    ? `Current Reporting Period is tied to ${reportDateDisplay()||mon}.`
+    : 'No dated ALG-CB column was found for the reporting date.';
+  return unique.length?unique:periods.map((_,i)=>i).filter(i=>!isYearTotal(periods[i]));
 }
 function liquidityRowClass(label){
   const s=cleanText(label).toLowerCase();
@@ -1190,7 +1238,7 @@ function renderLiquidityPeriodTable(){
       const key=encodeURIComponent(activeGroup);
       const isCollapsed=Boolean(collapsed[activeGroup]);
       body.push(`<tr class="section liq-group-row" data-liq-group-toggle="${key}">
-        <td class="rowhead" colspan="${shownPeriods.length+2}">
+        <td class="rowhead" colspan="${shownPeriods.length+1}">
           <button type="button" class="liq-group-button">
             <span>${isCollapsed?'▶':'▼'}</span>
             <strong>${escapeHtml(r.label)}</strong>
@@ -1208,7 +1256,6 @@ function renderLiquidityPeriodTable(){
     body.push(`<tr class="${r.type==='total'?'total ':''}${klass} liq-data-row" data-liq-group="${escapeHtml(r.groupName||activeGroup)}"${hidden?' hidden':''}>
       <td class="rowhead">${escapeHtml(r.label)}</td>
       ${vals.map(v=>`<td class="num ${klass}">${fmt(v)}</td>`).join('')}
-      <td class="num ${klass}">${fmt(total)}</td>
     </tr>`);
   });
 
@@ -1218,7 +1265,7 @@ function renderLiquidityPeriodTable(){
       <div class="liq-top-scroll" aria-label="Top horizontal scrollbar"><div></div></div>
       <div class="liq-main-scroll">
         <table class="sticky-report liq-report-table">
-          <thead><tr><th>${escapeHtml(title)}</th>${headers}<th>Total / Closing</th></tr></thead>
+          <thead><tr><th>${escapeHtml(title)}</th>${headers}</tr></thead>
           <tbody>${body.join('')}</tbody>
         </table>
       </div>
@@ -1239,13 +1286,11 @@ function ensureLiquidityCommandCentre(){
       mode.innerHTML=wanted.map(x=>`<option value="${x[0]}">${x[1]}</option>`).join('');
     }
     mode.value=localStorage.getItem('cf_liquidity_time_view')||mode.value||'weekly';
-    if(!mode.dataset.liqBound){
-      mode.addEventListener('change',()=>{
-        localStorage.setItem('cf_liquidity_time_view',mode.value);
-        renderLiquidityView();
-      });
-      mode.dataset.liqBound='1';
-    }
+    mode.onchange=()=>{
+      localStorage.setItem('cf_liquidity_time_view',mode.value);
+      renderLiquidityView();
+    };
+    mode.dataset.liqBound='652';
   }
 
   let toolbar=$('liquidityCommandToolbar');
@@ -1422,48 +1467,45 @@ function sameDay(a, b){
     a.getDate() === b.getDate();
 }
 
-function groupCashAtReportingDate(){
-  const group = FORECAST_DATA.algCb || {};
-  const rptDate = reportingDateObject();
-
-  if (!group.periods || !group.rows || !rptDate) return null;
-
-  let idx = -1;
-
-  group.periods.forEach((p, i) => {
-    const dt = parsePeriodDate(p.period || p.key || '');
-    if (sameDay(dt, rptDate)) idx = i;
-  });
-
-  if (idx < 0) return null;
-
-  const row = group.rows.find(r =>
-    /Estimated Cash Bal At The End Of The Period/i.test(cleanText(r.label || ''))
-  );
-
-  if (!row) return null;
-
-  return Number((row.values || [])[idx]) || null;
+function closingRowForGroup(group){
+  return (group.rows||[]).find(r=>
+    /Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i
+      .test(cleanText(r.label||''))
+  )||null;
 }
-
+function sourceIndexAtReportingDate(items, reportDate){
+  const exact=[];
+  const prior=[];
+  (items||[]).forEach((p,i)=>{
+    periodDateCandidates(p).forEach(dt=>{
+      if(sameDay(dt,reportDate)) exact.push({i,dt});
+      else if(dt.getTime()<=reportDate.getTime()) prior.push({i,dt});
+    });
+  });
+  if(exact.length) return exact[exact.length-1].i;
+  prior.sort((a,b)=>b.dt-a.dt || b.i-a.i);
+  return prior.length?prior[0].i:-1;
+}
+function groupCashAtReportingDate(){
+  const group=liquidityGroupSource();
+  const rptDate=reportingDateObject();
+  if(!group.periods||!group.rows||!rptDate) return null;
+  const idx=sourceIndexAtReportingDate(group.periods,rptDate);
+  if(idx<0) return null;
+  const row=closingRowForGroup(group);
+  if(!row) return null;
+  const value=Number((row.values||[])[idx]);
+  return Number.isFinite(value)?value:null;
+}
 function qiddiyaCashAtReportingDate(){
-  const qd = FORECAST_DATA.qiddiyaData || {};
-  const rptDate = reportingDateObject();
-
-  if (!qd.monthlySummary || !rptDate) return null;
-
-  const rptMonth = rptDate.toLocaleString('en-US', { month: 'short' });
-  const rptDateText = rptDate.toLocaleDateString('en-GB');
-
-  const match = qd.monthlySummary.find(x =>
-    cleanText(x.period || '') === cleanText(rptDateText) ||
-    (
-      cleanText(x.month || '') === cleanText(rptMonth) &&
-      cleanText(x.header || '').includes('W3')
-    )
-  );
-
-  return match ? Number(match.closing) || null : null;
+  const qd=liquidityQiddiyaSource();
+  const rptDate=reportingDateObject();
+  const summary=qd.monthlySummary||[];
+  if(!summary.length||!rptDate) return null;
+  const idx=sourceIndexAtReportingDate(summary,rptDate);
+  if(idx<0) return null;
+  const value=Number(summary[idx]&&summary[idx].closing);
+  return Number.isFinite(value)?value:null;
 }
 function renderLiquidityView(){
   if(!$('liquidityKpis')) return;
@@ -1522,6 +1564,34 @@ const qiddiyaCash = qiddiyaCashByDate !== null ? qiddiyaCashByDate : (Number(las
   }
 }
 
+
+
+window.getLiquiditySourceDiagnostics=function(){
+  const group=liquidityGroupSource();
+  const qd=liquidityQiddiyaSource();
+  const rpt=reportingDateObject();
+  const current=getCurrentReportingPeriodInfo();
+  const closing=closingRowForGroup(group);
+  return {
+    version:'6.5.2',
+    reportingDate:rpt?rpt.toISOString().slice(0,10):null,
+    currentPeriod:current?{
+      index:current.index,
+      label:current.label,
+      date:current.date&&current.date.toISOString().slice(0,10)
+    }:null,
+    groupCash:groupCashAtReportingDate(),
+    qiddiyaCash:qiddiyaCashAtReportingDate(),
+    operationalCash:(groupCashAtReportingDate()||0)-(qiddiyaCashAtReportingDate()||0),
+    groupPeriods:(group.periods||[]).map((p,i)=>({
+      index:i,month:p.month,header:p.header,period:p.period,
+      closing:closing?Number((closing.values||[])[i])||0:null
+    })),
+    qiddiyaPeriods:(qd.monthlySummary||[]).map((p,i)=>({
+      index:i,month:p.month,header:p.header,period:p.period,closing:p.closing
+    }))
+  };
+};
 
 
 /* ---------------- Google Sheet API v24: scoped loading ---------------- */
@@ -1950,7 +2020,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.5.1',sheets:{}};
+  const workingPayload={version:'FIP-6.5.2',sheets:{}};
   const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -2101,7 +2171,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.5.1',sheets:{}};
+    const corePayload={version:'FIP-6.5.2',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
