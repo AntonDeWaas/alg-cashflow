@@ -1,4 +1,4 @@
-// Dynamic CAPEX Summary dashboard module — scoped loading fix
+// Dynamic CAPEX Summary dashboard module — unified full refresh
 // Reads the "Capex Summary" Google Sheet tab and injects its own navigation/view.
 // Designed to work without changing app.js or the live HTML structure.
 

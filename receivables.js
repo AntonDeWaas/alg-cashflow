@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v23.3
+// Receivables Intelligence Module v23.6 — unified refresh and aging totals
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -10,7 +10,7 @@ const C={entities:[
 {id:'ALIS',label:'ALIS',currency:'OMR',fx:9.5,sheets:['DR-ALIS-System']},
 {id:'ALICLER',label:'ALICLER',currency:'AED',fx:1,sheets:['DR-ALICLER-System']},
 {id:'ALPS_UZ',label:'ALPS UZ',currency:'AED',fx:1,sheets:['DR-ALPS UZ-System']}
-],history:['Receivable History','Receivables History'],targets:['Collection Targets'],actuals:['Collection Actuals'],movement:['Receivable Movement','Receivables Movement']};
+],history:['DR-Last Period'],targets:['Coll vs Target'],actuals:['Coll vs Target'],movement:['DR-Movement Details']};
 
 const MOVEMENT_CONFIG={
   movementSheet:'DR-Movement Details',
@@ -42,6 +42,19 @@ const norm=v=>clean(v).toLowerCase().replace(/[^a-z0-9><]/g,'');
 function sheets(){return S.payload&&(S.payload.sheets||S.payload)||{}}
 function matrix(name){const sh=sheets();if(Array.isArray(sh[name]))return sh[name];const k=Object.keys(sh).find(x=>clean(x).toLowerCase()===clean(name).toLowerCase());return k&&Array.isArray(sh[k])?sh[k]:[]}
 function first(names){for(const n of names){const m=matrix(n);if(m.length)return{name:n,matrix:m}}return null}
+function payloadHasReceivables(payload){
+  const sh=payload&&(payload.sheets||payload);
+  if(!sh||typeof sh!=='object')return false;
+  const required=[
+    'DR-ALPS-System','DR-ALU-System','DR-ALIS-System',
+    'DR-ALICLER-System','DR-ALPS UZ-System'
+  ];
+  return required.some(name=>{
+    if(Array.isArray(sh[name])&&sh[name].length)return true;
+    const key=Object.keys(sh).find(k=>clean(k).toLowerCase()===name.toLowerCase());
+    return Boolean(key&&Array.isArray(sh[key])&&sh[key].length);
+  });
+}
 const cfg=id=>C.entities.find(e=>e.id===id)||C.entities[0];
 function headerRow(m){let best=-1,score=-1;m.forEach((r,i)=>{const c=(r||[]).map(norm);let s=0;if(c.some(x=>x.includes('accountname')||x==='customername'))s+=4;if(c.some(x=>x.includes('outstandingamount')||x==='totalreceivable'))s+=4;if(c.some(x=>x==='dimension'||x==='division'))s+=3;if(c.some(x=>x.includes('030')||x.includes('3160')||x.includes('>731')))s+=3;if(s>score){score=s;best=i}});return score>=7?best:-1}
 function hmap(headers){const m={};headers.forEach((h,i)=>{const n=norm(h);if(!n)return;if(m.customer==null&&(n.includes('accountname')||n==='customername'||n==='customer'))m.customer=i;if(m.code==null&&(n.includes('accountcode')||n==='account'))m.code=i;if(m.division==null&&(n==='dimension'||n==='division'))m.division=i;if(m.divCode==null&&n==='div')m.divCode=i;if(m.total==null&&(n.includes('outstandingamount')||n==='totalreceivable'||n==='total'))m.total=i;[
@@ -918,6 +931,7 @@ function renderAgingDetail(rs){
     const total=(S.entity==='GROUP'?r.totalAED:r.total)||0;
     totals.total+=total;
     BK.forEach((k,i)=>totals.buckets[k]+=vals[i]);
+
     return `<tr>
       <td class="recv-customer-name">${esc(r.customer)}</td>
       <td>${esc(r.entityLabel||r.entityId||'')}</td>
@@ -1473,13 +1487,32 @@ async function refresh(o){
   o=o||{};
   ui();
   const root=$('recvContent');
+  const button=$('recvRefreshBtn');
+  if(button){
+    button.disabled=true;
+    button.textContent='Refreshing Receivables…';
+  }
+  const finishButton=()=>{
+    if(button){
+      button.disabled=false;
+      button.textContent='Refresh Receivables';
+    }
+  };
 
-  if(applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD))return true;
+  // Reuse the shared payload only when it already contains receivable sheets.
+  // Previously any dashboard payload caused an early return, even when it
+  // contained only summary/forecast sheets, leaving Receivables blank.
+  if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
+    applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+    finishButton();
+    return true;
+  }
 
   if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing receivables…</div>';
 
   if(typeof window.loadGoogleSheetScope!=='function'){
     if(root)root.innerHTML='<div class="empty">Click the main <strong>Refresh Google Sheet</strong> button first.</div>';
+    finishButton();
     return false;
   }
 
@@ -1510,6 +1543,7 @@ async function refresh(o){
 
   if(!Object.keys(merged.sheets).length){
     if(root)root.innerHTML='<div class="empty">Could not load Receivables Intelligence. No receivable scope returned data.</div>';
+    finishButton();
     return false;
   }
 
@@ -1524,6 +1558,7 @@ async function refresh(o){
     note.textContent='Some optional receivable sources did not refresh: '+failures.join(', ')+'. Existing data was retained where available.';
     root.prepend(note);
   }
+  finishButton();
   return true;
 }
 function wrap(){
@@ -1542,13 +1577,19 @@ function boot(){
 
   // Receive the exact payload loaded by app.js.
   window.addEventListener('googleSheetPayloadReady',function(e){
-    applyPayload(e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD);
+    const payload=e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD;
+    if(payloadHasReceivables(payload))applyPayload(payload);
+  });
+  window.addEventListener('fip:data-ready',function(){
+    if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
+      applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
+    }
   });
 
   const t=setInterval(()=>{
     ui();
     wrap();
-    if(window.GOOGLE_SHEET_RAW_PAYLOAD){
+    if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
       applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
       clearInterval(t);
     }

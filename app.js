@@ -1831,7 +1831,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.3.2',sheets:{}};
+  const workingPayload={version:'FIP-6.3.3',sheets:{}};
   const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -1915,7 +1915,7 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
   finishGoogleProgress(
     failures.length
       ? 'Refresh complete with '+failures.length+' optional warning(s).'
-      : 'All Google Sheet data updated successfully.',
+      : 'All dashboard reports updated successfully.',
     false,
     failures
   );
@@ -1954,13 +1954,23 @@ async function refreshFromGoogleSheet(){
     {scope:'summary-capex',label:'capex summary'},
     {scope:'summary-collection-targets',label:'collection targets'},
     {scope:'summary-collection-actuals',label:'collection actuals'},
+
     {scope:'forecast-alps',label:'ALPS forecast'},
     {scope:'forecast-alicler',label:'ALICLER forecast'},
     {scope:'forecast-ss',label:'Site Services forecast'},
     {scope:'forecast-ksa',label:'KSA forecast'},
     {scope:'forecast-oman',label:'Oman forecast'},
     {scope:'forecast-alps-rak',label:'ALPS RAK Branch forecast'},
-    {scope:'forecast-uzbekistan',label:'Uzbekistan forecast'}
+    {scope:'forecast-uzbekistan',label:'Uzbekistan forecast'},
+
+    {scope:'receivables-alps',label:'ALPS receivables'},
+    {scope:'receivables-alu',label:'ALU receivables'},
+    {scope:'receivables-alis',label:'ALIS receivables'},
+    {scope:'receivables-alicler',label:'ALICLER receivables'},
+    {scope:'receivables-uz',label:'ALPS Uzbekistan receivables'},
+    {scope:'receivables-history',label:'receivables history'},
+    {scope:'receivables-movement',label:'receivables movement'},
+    {scope:'collections',label:'collections performance'}
   ];
 
   beginGoogleProgress(
@@ -1972,7 +1982,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.3.2',sheets:{}};
+    const corePayload={version:'FIP-6.3.3',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
@@ -2027,7 +2037,7 @@ async function refreshFromGoogleSheet(){
       const toast=document.createElement('div');
       toast.className='fip-refresh-toast';
       toast.textContent=
-        'Core dashboard updated. Remaining data sources are refreshing in parallel.';
+        'Core dashboard updated. All remaining reports are refreshing in parallel.';
       document.body.appendChild(toast);
       window.setTimeout(()=>toast.remove(),7000);
 
