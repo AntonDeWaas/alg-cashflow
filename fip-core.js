@@ -1,6 +1,6 @@
 (function(global){
 'use strict';
-const VERSION='6.3.3';
+const VERSION='6.4.0';
 
 function load(src){
   return new Promise((resolve,reject)=>{
@@ -67,7 +67,7 @@ function renderManager(){
   const cfg=global.FIP_CONFIG.data,status=global.FIP_CONFIG.status,r=rowsForConfig(cfg);
   const sourceStatus=status.error?'error':status.source;
   overlay.innerHTML=`<div class="fip-manager">
-    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.3.3 · Unified Full Refresh</p></div><button data-close>×</button></header>
+    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.4.0 · Stakeholder UX & Smart Search</p></div><button data-close>×</button></header>
     <div class="fip-manager-toolbar">
       <div><strong>Configuration:</strong> ${global.FIP_COMPONENTS.statusBadge(sourceStatus)}
         <strong>Rules:</strong> ${global.FIP_COMPONENTS.statusBadge('loaded')}
@@ -126,7 +126,7 @@ function renderManager(){
 function managerButton(){
   let b=document.getElementById('fipManagerButton');
   if(!b){b=document.createElement('button');b.id='fipManagerButton';b.type='button';document.body.appendChild(b)}
-  b.innerHTML='<span>FIP</span><small>6.3.3</small>';b.title='Open FIP 6.3.3';b.onclick=renderManager;
+  b.innerHTML='<span>FIP</span><small>6.4.0</small>';b.title='Open FIP 6.4.0';b.onclick=renderManager;
 }
 function styles(){
   if(document.getElementById('fipManagerStyles'))document.getElementById('fipManagerStyles').remove();
@@ -153,6 +153,7 @@ async function boot(){
     await load('fip-components.js');
     await load('fip-navigation.js');
     await load('fip-rules.js');
+    await load('fip-smart-search.js');
 
     global.FIP={
       version:VERSION,
@@ -161,6 +162,7 @@ async function boot(){
       components:global.FIP_COMPONENTS,
       navigation:global.FIP_NAVIGATION,
       rules:global.FIP_RULES,
+      smartSearch:global.FIP_SMART_SEARCH,
       open:renderManager
     };
     styles();managerButton();

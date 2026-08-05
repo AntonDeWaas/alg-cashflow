@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v23.6 — unified refresh and aging totals
+// Receivables Intelligence Module v24.0 — stakeholder cache and smart search ready
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
