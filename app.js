@@ -47,8 +47,8 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-window.FIP_APP_RUNTIME_VERSION='6.5.3';
-document.documentElement.setAttribute('data-fip-app-version','6.5.3');
+window.FIP_APP_RUNTIME_VERSION='6.5.4';
+document.documentElement.setAttribute('data-fip-app-version','6.5.4');
 
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
@@ -1598,7 +1598,7 @@ window.getLiquiditySourceDiagnostics=function(){
   const current=getCurrentReportingPeriodInfo();
   const closing=closingRowForGroup(group);
   return {
-    version:'6.5.3',
+    version:'6.5.4',
     reportingDate:rpt?rpt.toISOString().slice(0,10):null,
     currentPeriod:current?{
       index:current.index,
@@ -2045,7 +2045,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.5.3',sheets:{}};
+  const workingPayload={version:'FIP-6.5.4',sheets:{}};
   const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -2196,7 +2196,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.5.3',sheets:{}};
+    const corePayload={version:'FIP-6.5.4',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');

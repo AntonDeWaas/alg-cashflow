@@ -1,7 +1,7 @@
 // FIP 6.5.3 — landscape presentation and reporting-date standard
 (function(global){
 'use strict';
-const VERSION='6.5.3';
+const VERSION='6.5.4';
 const $=s=>document.querySelector(s);
 
 function reportingDate(){
@@ -35,32 +35,41 @@ function addReportingStrip(){
   });
 }
 
-function moveLiquidityCashFlowFirst(){
+function arrangeLiquidityLayout(){
   const summary=document.getElementById('liquiditySummary');
   if(!summary)return;
-  const summaryPanel=summary.closest('.card,.panel,section')||summary.parentElement;
-  const view=document.getElementById('view-liquidity')||summary.closest('[id^="view-"]');
-  if(!view||!summaryPanel)return;
 
+  const view=document.getElementById('view-liquidity')||summary.closest('[id^="view-"]');
+  if(!view)return;
+
+  const summaryPanel=summary.closest('.card,.panel,section')||summary.parentElement;
   const hero=view.querySelector('.hero,.banner,.view-hero') ||
     [...view.children].find(x=>x.querySelector&&x.querySelector('#liquidityAsOf')) || null;
   const strip=view.querySelector(':scope > .fip-reporting-strip');
-  const anchor=hero||strip;
-  if(anchor && summaryPanel.previousElementSibling!==anchor){
-    anchor.insertAdjacentElement('afterend',summaryPanel);
+
+  // Detailed cash flow stays near the top, immediately after the hero/reporting strip.
+  const topAnchor=hero||strip;
+  if(topAnchor && summaryPanel && summaryPanel.previousElementSibling!==topAnchor){
+    topAnchor.insertAdjacentElement('afterend',summaryPanel);
   }
 
+  // Cash position bridge must remain only on Liquidity and always at the bottom.
   const bridge=document.getElementById('liquidityBridge');
-  const kpis=document.getElementById('liquidityKpis');
-  if(bridge&&kpis){
+  if(bridge){
     const bridgePanel=bridge.closest('.card,.panel,section')||bridge.parentElement;
-    const kpiPanel=kpis.closest('.card,.panel,section')||kpis.parentElement;
-    if(bridgePanel&&kpiPanel&&bridgePanel.previousElementSibling!==kpiPanel){
-      kpiPanel.insertAdjacentElement('afterend',bridgePanel);
+    if(bridgePanel && bridgePanel.parentElement===view){
+      view.appendChild(bridgePanel);
     }
   }
-}
 
+  // Remove any accidental duplicate bridge outside the Liquidity view.
+  document.querySelectorAll('#liquidityBridge').forEach(node=>{
+    if(!view.contains(node)){
+      const panel=node.closest('.card,.panel,section')||node;
+      panel.remove();
+    }
+  });
+}
 function improveChartAccessibility(){
   const svg=document.getElementById('chart');
   if(!svg)return;
@@ -72,14 +81,14 @@ function improveChartAccessibility(){
 
 function apply(){
   addReportingStrip();
-  moveLiquidityCashFlowFirst();
+  arrangeLiquidityLayout();
   improveChartAccessibility();
 }
 
 function styles(){
-  if(document.getElementById('fipPresentation653Styles'))return;
+  if(document.getElementById('fipPresentation654Styles'))return;
   const s=document.createElement('style');
-  s.id='fipPresentation653Styles';
+  s.id='fipPresentation654Styles';
   s.textContent=`
 :root{--fip-page-max:1920px}
 body{overflow-x:hidden}
@@ -99,6 +108,38 @@ table{font-size:clamp(.76rem,.76vw,.88rem)}
 #view-dashboard #chart,#view-consolidated #chart{width:100%;height:clamp(260px,32vw,390px)}
 #view-receivables .recv-two{grid-template-columns:repeat(2,minmax(0,1fr))}
 #view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(150px,1fr))!important}
+
+#view-receivables .recv-customer-name{
+  white-space:normal!important;
+  overflow-wrap:anywhere!important;
+  word-break:normal!important;
+  line-height:1.2!important;
+  min-width:240px!important;
+  max-width:320px!important;
+}
+#view-receivables .recv-customer-table th:nth-child(2),
+#view-receivables .recv-customer-table td:nth-child(2){
+  min-width:240px!important;
+  max-width:320px!important;
+  white-space:normal!important;
+  overflow-wrap:anywhere!important;
+}
+#view-receivables .recv-aging-detail-table th:first-child,
+#view-receivables .recv-aging-detail-table td:first-child{
+  min-width:260px!important;
+  max-width:320px!important;
+  white-space:normal!important;
+  overflow-wrap:anywhere!important;
+}
+#view-receivables .recv-aging-filters{
+  position:sticky;
+  top:0;
+  z-index:30;
+}
+#view-liquidity #liquidityBridge{
+  margin-top:18px!important;
+}
+
 @media (min-width:1400px){
   #view-receivables .recv-panel,#view-liquidity .panel{padding:16px 18px}
 }

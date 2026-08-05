@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v24.0 — stakeholder cache and smart search ready
+// Receivables Intelligence Module v23.7 — flexible aging ranges
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -10,7 +10,7 @@ const C={entities:[
 {id:'ALIS',label:'ALIS',currency:'OMR',fx:9.5,sheets:['DR-ALIS-System']},
 {id:'ALICLER',label:'ALICLER',currency:'AED',fx:1,sheets:['DR-ALICLER-System']},
 {id:'ALPS_UZ',label:'ALPS UZ',currency:'AED',fx:1,sheets:['DR-ALPS UZ-System']}
-],history:['DR-Last Period'],targets:['Coll vs Target'],actuals:['Coll vs Target'],movement:['DR-Movement Details']};
+],history:['Receivable History','Receivables History'],targets:['Collection Targets'],actuals:['Collection Actuals'],movement:['Receivable Movement','Receivables Movement']};
 
 const MOVEMENT_CONFIG={
   movementSheet:'DR-Movement Details',
@@ -32,6 +32,8 @@ const MOVEMENT_CONFIG={
 };
 
 const S={payload:null,entity:'GROUP',section:'overview',parsed:{},updated:null,wrapped:false,
+  agingFilter:{from:0,to:13,min:0,search:''},
+  movementFilter:{from:6,to:13,min:0,search:''},
   collection:{year:null,month:null,country:'GROUP',entity:'GROUP',division:'ALL',coreOnly:false}};
 const $=id=>document.getElementById(id),clean=v=>String(v==null?'':v).replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 const esc=v=>clean(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
@@ -42,25 +44,50 @@ const norm=v=>clean(v).toLowerCase().replace(/[^a-z0-9><]/g,'');
 function sheets(){return S.payload&&(S.payload.sheets||S.payload)||{}}
 function matrix(name){const sh=sheets();if(Array.isArray(sh[name]))return sh[name];const k=Object.keys(sh).find(x=>clean(x).toLowerCase()===clean(name).toLowerCase());return k&&Array.isArray(sh[k])?sh[k]:[]}
 function first(names){for(const n of names){const m=matrix(n);if(m.length)return{name:n,matrix:m}}return null}
-function payloadHasReceivables(payload){
-  const sh=payload&&(payload.sheets||payload);
-  if(!sh||typeof sh!=='object')return false;
-  const required=[
-    'DR-ALPS-System','DR-ALU-System','DR-ALIS-System',
-    'DR-ALICLER-System','DR-ALPS UZ-System'
-  ];
-  return required.some(name=>{
-    if(Array.isArray(sh[name])&&sh[name].length)return true;
-    const key=Object.keys(sh).find(k=>clean(k).toLowerCase()===name.toLowerCase());
-    return Boolean(key&&Array.isArray(sh[key])&&sh[key].length);
-  });
-}
 const cfg=id=>C.entities.find(e=>e.id===id)||C.entities[0];
 function headerRow(m){let best=-1,score=-1;m.forEach((r,i)=>{const c=(r||[]).map(norm);let s=0;if(c.some(x=>x.includes('accountname')||x==='customername'))s+=4;if(c.some(x=>x.includes('outstandingamount')||x==='totalreceivable'))s+=4;if(c.some(x=>x==='dimension'||x==='division'))s+=3;if(c.some(x=>x.includes('030')||x.includes('3160')||x.includes('>731')))s+=3;if(s>score){score=s;best=i}});return score>=7?best:-1}
 function hmap(headers){const m={};headers.forEach((h,i)=>{const n=norm(h);if(!n)return;if(m.customer==null&&(n.includes('accountname')||n==='customername'||n==='customer'))m.customer=i;if(m.code==null&&(n.includes('accountcode')||n==='account'))m.code=i;if(m.division==null&&(n==='dimension'||n==='division'))m.division=i;if(m.divCode==null&&n==='div')m.divCode=i;if(m.total==null&&(n.includes('outstandingamount')||n==='totalreceivable'||n==='total'))m.total=i;[
 ['0_30',/^(a)?030$|^0to30$|^1m/],['31_60',/^3160$|^31to60$|^2m/],['61_90',/^6190$|^61to90$|^3m/],['91_120',/^91120$|^91to120$|^4m/],['121_150',/^121150$|^121to150$|^5m/],['151_180',/^151180$|^151to180$|^6m/],['181_210',/^181210$|^181to210$|^7m/],['211_240',/^211240$|^211to240$|^8m/],['241_270',/^241270$|^241to270$|^9m/],['271_300',/^271300$|^271to300$|^10m/],['301_330',/^301330$|^301to330$|^11m/],['331_365',/^331365$|^331to365$|^12m/],['366_730',/^366730$|^>1yr/],['gt731',/^>731$|^>2yr/],['gt180',/^>180$|^over180/],['gt90',/^>90$|^above90days|^over90/]
 ].forEach(([k,rx])=>{if(m[k]==null&&rx.test(n))m[k]=i})});return m}
 const BK=['0_30','31_60','61_90','91_120','121_150','151_180','181_210','211_240','241_270','271_300','301_330','331_365','366_730','gt731'];
+const BK_LABELS=['0–30','31–60','61–90','91–120','121–150','151–180','181–210','211–240','241–270','271–300','301–330','331–365','366–730','>731'];
+function agingRangeAmount(row,from,to,factor){
+  return BK.slice(from,to+1).reduce((a,k)=>a+(Number(row.buckets&&row.buckets[k])||0),0)*(factor||1);
+}
+function agingFilterControls(kind){
+  const f=kind==='movement'?S.movementFilter:S.agingFilter;
+  const prefix=kind==='movement'?'mov':'age';
+  return `<div class="recv-aging-filter-block"><div class="recv-aging-filters" data-aging-kind="${kind}">
+    <label>Age From<select data-aging-field="from">${BK_LABELS.map((x,i)=>`<option value="${i}" ${i===f.from?'selected':''}>${x}</option>`).join('')}</select></label>
+    <label>Age To<select data-aging-field="to">${BK_LABELS.map((x,i)=>`<option value="${i}" ${i===f.to?'selected':''}>${x}</option>`).join('')}</select></label>
+    <label>Minimum Outstanding<input data-aging-field="min" type="number" min="0" step="1000" value="${Number(f.min)||0}"></label>
+    <label class="recv-aging-search">Customer / division<input data-aging-field="search" type="search" value="${esc(f.search||'')}" placeholder="Search…"></label>
+    <button type="button" data-aging-reset>Reset</button>
+  </div><div class="recv-aging-filter-note">Select any continuous aging range, for example 0–30 to 61–90 or 181–210 to &gt;731.</div></div>`;
+}
+function bindAgingFilterControls(){
+  document.querySelectorAll('.recv-aging-filters').forEach(root=>{
+    const kind=root.dataset.agingKind;
+    const target=kind==='movement'?S.movementFilter:S.agingFilter;
+    root.querySelectorAll('[data-aging-field]').forEach(control=>{
+      control.onchange=control.oninput=()=>{
+        const field=control.dataset.agingField;
+        target[field]=(field==='search')?clean(control.value):Number(control.value)||0;
+        if(target.from>target.to){
+          if(field==='from')target.to=target.from;else target.from=target.to;
+        }
+        content();
+      };
+    });
+    const reset=root.querySelector('[data-aging-reset]');
+    if(reset)reset.onclick=()=>{
+      if(kind==='movement')S.movementFilter={from:6,to:13,min:0,search:''};
+      else S.agingFilter={from:0,to:13,min:0,search:''};
+      content();
+    };
+  });
+}
+
 function parseEntity(e){
   const src=first(e.sheets);
   if(!src)return{entity:e,rows:[]};
@@ -159,7 +186,7 @@ function aggregate(rs){
 }
 const currency=()=>S.entity==='GROUP'?'AED':cfg(S.entity).currency;
 function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerHTML=C.entities.map(e=>{const ok=e.id==='GROUP'||(S.parsed[e.id]&&S.parsed[e.id].rows.length);return`<button class="recv-pill ${S.entity===e.id?'active':''}" data-e="${e.id}" ${ok?'':'disabled'}>${esc(e.label)}${e.id==='ALU'?' · SAR':e.id==='ALIS'?' · OMR':''}</button>`}).join('');root.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{S.entity=b.dataset.e;render()})}
-function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Over 180 Movement'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
+function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Aging Movement by Bracket'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
 function topTable(rs,field,title){
@@ -812,8 +839,9 @@ function renderMovementAnalysis(){
   return `${movementValidation(lines)}${movementKpis(lines)}${compactMovementTable(lines)}${movementWaterfall(lines)}<div class="recv-movement-grid">${compactAgingTable(lines)}${reconciliationTable(lines)}</div>${adjustments?`<div class="recv-movement-grid">${adjustments}${movementBrief(lines)}</div>`:movementBrief(lines)}`;
 }
 
-function over180MovementRecords(){
+function agingMovementRecords(){
   const prior=parseLastPeriod(),out=[];
+  const filter=S.movementFilter;
   MOVEMENT_CONFIG.currentBlocks.forEach(block=>{
     if(S.entity!=='GROUP'&&S.entity!==block.id)return;
     const factor=S.entity==='GROUP'?block.fx:1;
@@ -835,15 +863,19 @@ function over180MovementRecords(){
 
     previous.forEach(r=>{
       const k=key(r.accountCode,r.customer,r.division);
-      ensure(k,{customer:r.customer,division:r.division||'Unassigned'}).previous+=(r.over180||0)*factor;
+      ensure(k,{customer:r.customer,division:r.division||'Unassigned'}).previous+=
+        agingRangeAmount(r,filter.from,filter.to,factor);
     });
     current.forEach(r=>{
       const k=key(r.code,r.customer,r.division);
-      ensure(k,{customer:r.customer,division:r.division||'Unassigned'}).current+=(r.over180||0)*factor;
+      ensure(k,{customer:r.customer,division:r.division||'Unassigned'}).current+=
+        agingRangeAmount(r,filter.from,filter.to,factor);
     });
 
-    Object.keys(map).forEach(k=>{
-      const r=map[k];
+    Object.values(map).forEach(r=>{
+      const q=clean(filter.search).toLowerCase();
+      if(q && !(clean(r.customer)+' '+clean(r.division)+' '+clean(r.entity)).toLowerCase().includes(q))return;
+      if(Math.max(Math.abs(r.previous),Math.abs(r.current))<(Number(filter.min)||0))return;
       if(r.previous===0&&r.current===0)return;
       r.movement=r.current-r.previous;
       r.status=r.previous===0&&r.current>0?'New':
@@ -864,104 +896,93 @@ function over180StatusClass(status){
     status==='Increased'||status==='New'?'recv-bad':'';
 }
 function renderOver180Movement(){
-  const all=over180MovementRecords(),top=all.slice(0,10),ccy=currency();
+  const all=agingMovementRecords(),top=all.slice(0,50),ccy=currency(),f=S.movementFilter;
   const previous=all.reduce((a,r)=>a+r.previous,0);
   const current=all.reduce((a,r)=>a+r.current,0);
   const movement=current-previous;
+  const rangeLabel=BK_LABELS[f.from]+' to '+BK_LABELS[f.to];
 
-  const cards=`<div class="grid kpis recv-kpis">
-    ${kpi('Previous >180',ccy+' '+fmt(previous),'DR-Last Period')}
-    ${kpi('Current >180',ccy+' '+fmt(current),'Current ERP aging')}
+  const cards=`${agingFilterControls('movement')}<div class="grid kpis recv-kpis">
+    ${kpi('Previous · '+rangeLabel,ccy+' '+fmt(previous),'DR-Last Period')}
+    ${kpi('Current · '+rangeLabel,ccy+' '+fmt(current),'Current ERP aging')}
     ${kpi('Movement',ccy+' '+fmt(movement),movement<=0?'Improvement':'Deterioration',movement<=0?'pos':'neg')}
-    ${kpi('Customers',fmt(all.length),'With previous or current >180 balance')}
+    ${kpi('Customers',fmt(all.length),'Matching selected bracket range')}
   </div>`;
 
   const rows=top.map((r,i)=>`<tr>
-    <td>${i+1}</td>
-    <td class="recv-customer-name">${esc(r.customer)}</td>
-    <td>${esc(r.entity)}</td>
-    <td>${esc(r.division)}</td>
-    <td class="num">${fmt(r.previous)}</td>
-    <td class="num">${fmt(r.current)}</td>
+    <td>${i+1}</td><td class="recv-customer-name">${esc(r.customer)}</td>
+    <td>${esc(r.entity)}</td><td>${esc(r.division)}</td>
+    <td class="num">${fmt(r.previous)}</td><td class="num">${fmt(r.current)}</td>
     <td class="num ${over180StatusClass(r.status)}">${fmt(r.movement)}</td>
     <td class="${over180StatusClass(r.status)}">${esc(r.status)}</td>
   </tr>`).join('');
 
   const table=`<div class="card panel recv-panel">
-    <div class="panelhead"><div>
-      <h3>Top 10 Customer Movement — Over 180 Days</h3>
-      <p class="hint">Previous period from DR-Last Period · Current period from live DR entity sheets</p>
-    </div></div>
-    <div class="recv-table-wrap">
+    <div class="panelhead"><div><h3>Customer Aging Movement — ${esc(rangeLabel)}</h3>
+      <p class="hint">Previous period from DR-Last Period · Current period from live DR entity sheets · Top 50 shown</p></div></div>
+    <div class="recv-table-wrap recv-landscape-scroll">
       <table class="recv-table recv-customer-table">
         <thead><tr><th>#</th><th>Customer</th><th>Entity</th><th>Division</th>
-        <th>Previous &gt;180</th><th>Current &gt;180</th><th>Movement</th><th>Status</th></tr></thead>
-        <tbody>${rows||'<tr><td colspan="8" class="empty">No over-180 customer movement detected.</td></tr>'}</tbody>
+        <th>Previous</th><th>Current</th><th>Movement</th><th>Status</th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="8" class="empty">No customer movement detected for this bracket range.</td></tr>'}</tbody>
       </table>
-    </div>
-  </div>`;
+    </div></div>`;
 
-  const max=Math.max(1,...top.map(r=>Math.abs(r.movement)));
+  const chartTop=top.slice(0,12),max=Math.max(1,...chartTop.map(r=>Math.abs(r.movement)));
   const chart=`<div class="card panel recv-panel">
-    <div class="panelhead"><div><h3>Largest Movements</h3>
-      <p class="hint">Green = improvement · Red = deterioration</p></div></div>
-    <div class="recv-bars">${top.filter(r=>Math.abs(r.movement)>.5).map(r=>`
-      <div class="recv-bar-row">
-        <div class="recv-bar-label">${esc(r.customer)}</div>
-        <div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(2,Math.abs(r.movement)/max*100)}%"></div></div>
-        <div class="recv-bar-value ${over180StatusClass(r.status)}">${fmt(r.movement)}</div>
-      </div>`).join('')||'<div class="empty">No movements to chart.</div>'}
-    </div>
-  </div>`;
+    <div class="panelhead"><div><h3>Largest Movements</h3><p class="hint">Green = improvement · Red = deterioration</p></div></div>
+    <div class="recv-bars">${chartTop.filter(r=>Math.abs(r.movement)>.5).map(r=>`
+      <div class="recv-bar-row"><div class="recv-bar-label">${esc(r.customer)}</div>
+      <div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(2,Math.abs(r.movement)/max*100)}%"></div></div>
+      <div class="recv-bar-value ${over180StatusClass(r.status)}">${fmt(r.movement)}</div></div>`).join('')||'<div class="empty">No movements to chart.</div>'}</div></div>`;
 
-  return cards+`<div class="recv-two">${table}${chart}</div>`;
+  setTimeout(bindAgingFilterControls,0);
+  return cards+`<div class="recv-two recv-wide-two">${table}${chart}</div>`;
 }
 
 
 function renderAgingDetail(rs){
-  const ccy=currency();
-  const sorted=rs.slice().sort((a,b)=>(b.total||0)-(a.total||0));
-  const head=['Customer','Entity','Division','Total','0–30','31–60','61–90','91–120','121–150','151–180','181–210','211–240','241–270','271–300','301–330','331–365','366–730','>731'];
-  const totals={total:0,buckets:{}};
-  BK.forEach(k=>totals.buckets[k]=0);
-
-  const body=sorted.map(r=>{
-    const f=S.entity==='GROUP'?r.fx:1;
-    const vals=BK.map(k=>(r.buckets[k]||0)*f);
+  const ccy=currency(),f=S.agingFilter;
+  const selectedKeys=BK.slice(f.from,f.to+1);
+  const selectedLabels=BK_LABELS.slice(f.from,f.to+1);
+  const q=clean(f.search).toLowerCase();
+  const filtered=rs.map(r=>{
+    const factor=S.entity==='GROUP'?r.fx:1;
+    const range=agingRangeAmount(r,f.from,f.to,factor);
     const total=(S.entity==='GROUP'?r.totalAED:r.total)||0;
-    totals.total+=total;
-    BK.forEach((k,i)=>totals.buckets[k]+=vals[i]);
+    return {r,factor,range,total};
+  }).filter(x=>{
+    if(x.range<(Number(f.min)||0))return false;
+    if(q && !(clean(x.r.customer)+' '+clean(x.r.division)+' '+clean(x.r.entityLabel||x.r.entityId)).toLowerCase().includes(q))return false;
+    return x.range!==0 || Number(f.min)===0;
+  }).sort((a,b)=>b.range-a.range);
 
-    return `<tr>
-      <td class="recv-customer-name">${esc(r.customer)}</td>
-      <td>${esc(r.entityLabel||r.entityId||'')}</td>
-      <td>${esc(r.division)}</td>
-      <td class="num">${fmt(total)}</td>
-      ${vals.map((v,i)=>`<td class="num ${i>=6?'recv-age-red':i>=3?'recv-age-amber':''}">${fmt(v)}</td>`).join('')}
-    </tr>`;
+  const totals={total:0,range:0,buckets:selectedKeys.map(()=>0)};
+  const body=filtered.map(x=>{
+    totals.total+=x.total;totals.range+=x.range;
+    const vals=selectedKeys.map((k,i)=>{
+      const v=(x.r.buckets[k]||0)*x.factor;totals.buckets[i]+=v;return v;
+    });
+    return `<tr><td class="recv-customer-name">${esc(x.r.customer)}</td>
+      <td>${esc(x.r.entityLabel||x.r.entityId||'')}</td><td>${esc(x.r.division)}</td>
+      <td class="num">${fmt(x.total)}</td><td class="num recv-range-total">${fmt(x.range)}</td>
+      ${vals.map((v,i)=>`<td class="num ${f.from+i>=6?'recv-age-red':f.from+i>=3?'recv-age-amber':''}">${fmt(v)}</td>`).join('')}</tr>`;
   }).join('');
 
-  const footer=`<tr class="recv-aging-grand-total">
-    <td>Grand Total</td>
-    <td>${esc(S.entity==='GROUP'?'Group':cfg(S.entity).label)}</td>
-    <td>All Divisions</td>
-    <td class="num">${fmt(totals.total)}</td>
-    ${BK.map((k,i)=>`<td class="num ${i>=6?'recv-age-red':i>=3?'recv-age-amber':''}">${fmt(totals.buckets[k])}</td>`).join('')}
-  </tr>`;
-
-  return `<div class="card panel recv-panel">
-    <div class="panelhead"><div>
-      <h3>Aging Analysis Detail</h3>
-      <p class="hint">${sorted.length} customer balances · ${esc(ccy)} · all aging brackets</p>
-    </div></div>
-    <div class="recv-table-wrap recv-aging-detail-scroll">
+  const rangeLabel=BK_LABELS[f.from]+' to '+BK_LABELS[f.to];
+  return `${agingFilterControls('detail')}<div class="card panel recv-panel recv-landscape-panel">
+    <div class="panelhead"><div><h3>Aging Analysis Detail — ${esc(rangeLabel)}</h3>
+      <p class="hint">${filtered.length} customer balances · ${esc(ccy)} · sorted by selected-range balance</p></div></div>
+    <div class="recv-table-wrap recv-aging-detail-scroll recv-landscape-scroll">
       <table class="recv-table recv-aging-detail-table">
-        <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-        <tbody>${body||'<tr><td colspan="18" class="empty">No aging detail detected.</td></tr>'}</tbody>
-        <tfoot>${footer}</tfoot>
+        <thead><tr><th>Customer</th><th>Entity</th><th>Division</th><th>Total</th><th>Selected Range</th>
+          ${selectedLabels.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${body||`<tr><td colspan="${5+selectedLabels.length}" class="empty">No balances match the selected filters.</td></tr>`}</tbody>
+        <tfoot><tr class="recv-summary-total"><td>Grand Total</td><td></td><td></td>
+          <td class="num">${fmt(totals.total)}</td><td class="num">${fmt(totals.range)}</td>
+          ${totals.buckets.map(v=>`<td class="num">${fmt(v)}</td>`).join('')}</tr></tfoot>
       </table>
-    </div>
-  </div>`;
+    </div></div>`;
 }
 function parseCollectionMonthHeader(value){
   const s=clean(value);
@@ -1266,13 +1287,26 @@ function renderCollectionsPerformance(){
   return html;
 }
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a)}
+function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a);
+setTimeout(bindAgingFilterControls,0)}
 catch(err){
   console.error('Receivables render error',err);
   root.innerHTML='<div class="card panel recv-panel"><div class="empty"><strong>Receivables rendering error:</strong> '+esc(err&&err.message?err.message:String(err))+'</div></div>';
 }}
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
+#view-receivables .recv-aging-filter-block{margin:10px 0}#view-receivables .recv-aging-filters{display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin:12px 0;padding:10px 12px;background:#f6f3ed;border:1px solid #ded7cc;border-radius:10px}
+#view-receivables .recv-aging-filters label{display:flex;flex-direction:column;gap:4px;font-size:.72rem;font-weight:800;color:#53606c;text-transform:uppercase;letter-spacing:.04em}
+#view-receivables .recv-aging-filters select,#view-receivables .recv-aging-filters input{min-width:120px;border:1px solid #cfc7bb;border-radius:7px;padding:7px 8px;background:#fff;font:inherit}
+#view-receivables .recv-aging-filters .recv-aging-search{flex:1;min-width:210px}
+#view-receivables .recv-aging-filter-note{margin-top:5px;font-size:.74rem;color:#68737e}#view-receivables .recv-aging-filters button{border:1px solid #cfc7bb;background:#fff;border-radius:7px;padding:8px 12px;font-weight:800;cursor:pointer}
+#view-receivables .recv-landscape-scroll{max-height:650px;overflow:auto;scrollbar-gutter:stable both-edges}
+#view-receivables .recv-aging-detail-table thead th{position:sticky;top:0;z-index:20}
+#view-receivables .recv-aging-detail-table th:first-child,#view-receivables .recv-aging-detail-table td:first-child{position:sticky;left:0;z-index:12;background:#fff;min-width:280px}
+#view-receivables .recv-aging-detail-table thead th:first-child{z-index:24;background:#0b3767}
+#view-receivables .recv-aging-detail-table tfoot td{position:sticky;bottom:0;background:#dce8f4!important;font-weight:900;z-index:16}
+#view-receivables .recv-range-total{font-weight:900;background:#eef5f2}
+#view-receivables .recv-wide-two{grid-template-columns:minmax(680px,1.35fr) minmax(420px,.65fr)}
 #view-receivables .recv-summary-table{min-width:1120px}
 
 #view-receivables .recv-customer-table{min-width:900px}
@@ -1433,44 +1467,6 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
   white-space:normal;
   overflow-wrap:anywhere;
 }
-
-#view-receivables .recv-aging-detail-scroll{
-  max-height:620px;
-  overflow:auto;
-  scrollbar-gutter:stable both-edges;
-  border:1px solid #d9dee5;
-  border-radius:8px;
-}
-#view-receivables .recv-aging-detail-table thead th{
-  position:sticky;
-  top:0;
-  z-index:20;
-}
-#view-receivables .recv-aging-detail-table tfoot td{
-  position:sticky;
-  bottom:0;
-  z-index:16;
-  font-weight:900;
-  background:#d9e5f3!important;
-  border-top:3px solid #0b3767;
-}
-#view-receivables .recv-aging-detail-table th:nth-child(3),
-#view-receivables .recv-aging-detail-table td:nth-child(3){
-  box-shadow:4px 0 7px -5px rgba(0,0,0,.65);
-  border-right:2px solid #9fb4cb;
-}
-#view-receivables .recv-aging-detail-table tfoot td:nth-child(1){
-  position:sticky;left:0;z-index:24;min-width:260px;max-width:260px;
-}
-#view-receivables .recv-aging-detail-table tfoot td:nth-child(2){
-  position:sticky;left:260px;z-index:24;min-width:95px;max-width:95px;
-}
-#view-receivables .recv-aging-detail-table tfoot td:nth-child(3){
-  position:sticky;left:355px;z-index:24;min-width:140px;max-width:140px;
-}
-#view-receivables .recv-aging-grand-total td{
-  font-variant-numeric:tabular-nums;
-}
 `;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
@@ -1487,32 +1483,13 @@ async function refresh(o){
   o=o||{};
   ui();
   const root=$('recvContent');
-  const button=$('recvRefreshBtn');
-  if(button){
-    button.disabled=true;
-    button.textContent='Refreshing Receivables…';
-  }
-  const finishButton=()=>{
-    if(button){
-      button.disabled=false;
-      button.textContent='Refresh Receivables';
-    }
-  };
 
-  // Reuse the shared payload only when it already contains receivable sheets.
-  // Previously any dashboard payload caused an early return, even when it
-  // contained only summary/forecast sheets, leaving Receivables blank.
-  if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
-    applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
-    finishButton();
-    return true;
-  }
+  if(applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD))return true;
 
   if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing receivables…</div>';
 
   if(typeof window.loadGoogleSheetScope!=='function'){
     if(root)root.innerHTML='<div class="empty">Click the main <strong>Refresh Google Sheet</strong> button first.</div>';
-    finishButton();
     return false;
   }
 
@@ -1543,7 +1520,6 @@ async function refresh(o){
 
   if(!Object.keys(merged.sheets).length){
     if(root)root.innerHTML='<div class="empty">Could not load Receivables Intelligence. No receivable scope returned data.</div>';
-    finishButton();
     return false;
   }
 
@@ -1558,7 +1534,6 @@ async function refresh(o){
     note.textContent='Some optional receivable sources did not refresh: '+failures.join(', ')+'. Existing data was retained where available.';
     root.prepend(note);
   }
-  finishButton();
   return true;
 }
 function wrap(){
@@ -1577,19 +1552,13 @@ function boot(){
 
   // Receive the exact payload loaded by app.js.
   window.addEventListener('googleSheetPayloadReady',function(e){
-    const payload=e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD;
-    if(payloadHasReceivables(payload))applyPayload(payload);
-  });
-  window.addEventListener('fip:data-ready',function(){
-    if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
-      applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
-    }
+    applyPayload(e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD);
   });
 
   const t=setInterval(()=>{
     ui();
     wrap();
-    if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
+    if(window.GOOGLE_SHEET_RAW_PAYLOAD){
       applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
       clearInterval(t);
     }
