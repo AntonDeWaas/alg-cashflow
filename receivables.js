@@ -1,4 +1,4 @@
-// Receivables Intelligence Module v23.4 — scoped loading fix
+// Receivables Intelligence Module v23.3
 // Dynamic, self-contained dashboard module for Al Laith Group.
 // Reads current ERP aging sheets and optional history/collection sheets.
 (function(){
@@ -10,7 +10,7 @@ const C={entities:[
 {id:'ALIS',label:'ALIS',currency:'OMR',fx:9.5,sheets:['DR-ALIS-System']},
 {id:'ALICLER',label:'ALICLER',currency:'AED',fx:1,sheets:['DR-ALICLER-System']},
 {id:'ALPS_UZ',label:'ALPS UZ',currency:'AED',fx:1,sheets:['DR-ALPS UZ-System']}
-],history:['DR-Last Period'],targets:['Coll vs Target'],actuals:['Coll vs Target'],movement:['DR-Movement Details']};
+],history:['Receivable History','Receivables History'],targets:['Collection Targets'],actuals:['Collection Actuals'],movement:['Receivable Movement','Receivables Movement']};
 
 const MOVEMENT_CONFIG={
   movementSheet:'DR-Movement Details',
@@ -42,19 +42,6 @@ const norm=v=>clean(v).toLowerCase().replace(/[^a-z0-9><]/g,'');
 function sheets(){return S.payload&&(S.payload.sheets||S.payload)||{}}
 function matrix(name){const sh=sheets();if(Array.isArray(sh[name]))return sh[name];const k=Object.keys(sh).find(x=>clean(x).toLowerCase()===clean(name).toLowerCase());return k&&Array.isArray(sh[k])?sh[k]:[]}
 function first(names){for(const n of names){const m=matrix(n);if(m.length)return{name:n,matrix:m}}return null}
-function payloadHasReceivables(payload){
-  const sh=payload&&(payload.sheets||payload);
-  if(!sh||typeof sh!=='object')return false;
-  const required=[
-    'DR-ALPS-System','DR-ALU-System','DR-ALIS-System',
-    'DR-ALICLER-System','DR-ALPS UZ-System'
-  ];
-  return required.some(name=>{
-    if(Array.isArray(sh[name])&&sh[name].length)return true;
-    const key=Object.keys(sh).find(k=>clean(k).toLowerCase()===name.toLowerCase());
-    return Boolean(key&&Array.isArray(sh[key])&&sh[key].length);
-  });
-}
 const cfg=id=>C.entities.find(e=>e.id===id)||C.entities[0];
 function headerRow(m){let best=-1,score=-1;m.forEach((r,i)=>{const c=(r||[]).map(norm);let s=0;if(c.some(x=>x.includes('accountname')||x==='customername'))s+=4;if(c.some(x=>x.includes('outstandingamount')||x==='totalreceivable'))s+=4;if(c.some(x=>x==='dimension'||x==='division'))s+=3;if(c.some(x=>x.includes('030')||x.includes('3160')||x.includes('>731')))s+=3;if(s>score){score=s;best=i}});return score>=7?best:-1}
 function hmap(headers){const m={};headers.forEach((h,i)=>{const n=norm(h);if(!n)return;if(m.customer==null&&(n.includes('accountname')||n==='customername'||n==='customer'))m.customer=i;if(m.code==null&&(n.includes('accountcode')||n==='account'))m.code=i;if(m.division==null&&(n==='dimension'||n==='division'))m.division=i;if(m.divCode==null&&n==='div')m.divCode=i;if(m.total==null&&(n.includes('outstandingamount')||n==='totalreceivable'||n==='total'))m.total=i;[
@@ -922,10 +909,15 @@ function renderAgingDetail(rs){
   const ccy=currency();
   const sorted=rs.slice().sort((a,b)=>(b.total||0)-(a.total||0));
   const head=['Customer','Entity','Division','Total','0–30','31–60','61–90','91–120','121–150','151–180','181–210','211–240','241–270','271–300','301–330','331–365','366–730','>731'];
+  const totals={total:0,buckets:{}};
+  BK.forEach(k=>totals.buckets[k]=0);
+
   const body=sorted.map(r=>{
     const f=S.entity==='GROUP'?r.fx:1;
     const vals=BK.map(k=>(r.buckets[k]||0)*f);
     const total=(S.entity==='GROUP'?r.totalAED:r.total)||0;
+    totals.total+=total;
+    BK.forEach((k,i)=>totals.buckets[k]+=vals[i]);
     return `<tr>
       <td class="recv-customer-name">${esc(r.customer)}</td>
       <td>${esc(r.entityLabel||r.entityId||'')}</td>
@@ -934,15 +926,25 @@ function renderAgingDetail(rs){
       ${vals.map((v,i)=>`<td class="num ${i>=6?'recv-age-red':i>=3?'recv-age-amber':''}">${fmt(v)}</td>`).join('')}
     </tr>`;
   }).join('');
+
+  const footer=`<tr class="recv-aging-grand-total">
+    <td>Grand Total</td>
+    <td>${esc(S.entity==='GROUP'?'Group':cfg(S.entity).label)}</td>
+    <td>All Divisions</td>
+    <td class="num">${fmt(totals.total)}</td>
+    ${BK.map((k,i)=>`<td class="num ${i>=6?'recv-age-red':i>=3?'recv-age-amber':''}">${fmt(totals.buckets[k])}</td>`).join('')}
+  </tr>`;
+
   return `<div class="card panel recv-panel">
     <div class="panelhead"><div>
       <h3>Aging Analysis Detail</h3>
       <p class="hint">${sorted.length} customer balances · ${esc(ccy)} · all aging brackets</p>
     </div></div>
-    <div class="recv-table-wrap">
+    <div class="recv-table-wrap recv-aging-detail-scroll">
       <table class="recv-table recv-aging-detail-table">
         <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
         <tbody>${body||'<tr><td colspan="18" class="empty">No aging detail detected.</td></tr>'}</tbody>
+        <tfoot>${footer}</tfoot>
       </table>
     </div>
   </div>`;
@@ -1417,6 +1419,44 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
   white-space:normal;
   overflow-wrap:anywhere;
 }
+
+#view-receivables .recv-aging-detail-scroll{
+  max-height:620px;
+  overflow:auto;
+  scrollbar-gutter:stable both-edges;
+  border:1px solid #d9dee5;
+  border-radius:8px;
+}
+#view-receivables .recv-aging-detail-table thead th{
+  position:sticky;
+  top:0;
+  z-index:20;
+}
+#view-receivables .recv-aging-detail-table tfoot td{
+  position:sticky;
+  bottom:0;
+  z-index:16;
+  font-weight:900;
+  background:#d9e5f3!important;
+  border-top:3px solid #0b3767;
+}
+#view-receivables .recv-aging-detail-table th:nth-child(3),
+#view-receivables .recv-aging-detail-table td:nth-child(3){
+  box-shadow:4px 0 7px -5px rgba(0,0,0,.65);
+  border-right:2px solid #9fb4cb;
+}
+#view-receivables .recv-aging-detail-table tfoot td:nth-child(1){
+  position:sticky;left:0;z-index:24;min-width:260px;max-width:260px;
+}
+#view-receivables .recv-aging-detail-table tfoot td:nth-child(2){
+  position:sticky;left:260px;z-index:24;min-width:95px;max-width:95px;
+}
+#view-receivables .recv-aging-detail-table tfoot td:nth-child(3){
+  position:sticky;left:355px;z-index:24;min-width:140px;max-width:140px;
+}
+#view-receivables .recv-aging-grand-total td{
+  font-variant-numeric:tabular-nums;
+}
 `;document.head.appendChild(s)}
 function ui(){styles();const nav=$('nav')||document.querySelector('nav.tabs');if(nav&&!nav.querySelector('[data-view="receivables"]')){const b=document.createElement('button');b.type='button';b.dataset.view='receivables';b.textContent='Receivables';const tx=nav.querySelector('[data-view="transactions"]');tx?nav.insertBefore(b,tx):nav.appendChild(b)}const main=document.querySelector('main');if(main&&!$('view-receivables')){const sec=document.createElement('section');sec.className='view';sec.id='view-receivables';sec.innerHTML=`<div class="card panel"><div class="panelhead recv-toolbar"><div><h2>Receivables Intelligence</h2><p class="hint" id="recvSubtitle">ERP aging, collections and movement analysis</p></div><button class="btn ghost" id="recvRefreshBtn">Refresh Receivables</button></div><div id="recvEntityTabs" class="recv-entity-tabs"></div><div id="recvSectionTabs" class="recv-section-tabs"></div><div id="recvContent"><div class="empty">Loading receivables…</div></div></div>`;main.appendChild(sec);$('recvRefreshBtn').onclick=refresh}}
 function api(){for(const id of['googleSheetUrl','googleUrl','sheetApiUrl','appsScriptUrl']){const el=$(id);if(el&&clean(el.value))return clean(el.value)}for(const k of['cf_google_sheet_url','googleSheetUrl','cashflow_google_url','appsScriptUrl'])try{const v=localStorage.getItem(k);if(clean(v))return clean(v)}catch(_){}return clean(window.DEFAULT_GOOGLE_SHEET_URL||'')}
@@ -1433,32 +1473,13 @@ async function refresh(o){
   o=o||{};
   ui();
   const root=$('recvContent');
-  const button=$('recvRefreshBtn');
-  if(button){
-    button.disabled=true;
-    button.textContent='Refreshing Receivables…';
-  }
-  const finishButton=()=>{
-    if(button){
-      button.disabled=false;
-      button.textContent='Refresh Receivables';
-    }
-  };
 
-  // Reuse the shared payload only when it already contains receivable sheets.
-  // Previously any dashboard payload caused an early return, even when it
-  // contained only summary/forecast sheets, leaving Receivables blank.
-  if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
-    applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
-    finishButton();
-    return true;
-  }
+  if(applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD))return true;
 
   if(root&&!o.silent)root.innerHTML='<div class="empty">Refreshing receivables…</div>';
 
   if(typeof window.loadGoogleSheetScope!=='function'){
     if(root)root.innerHTML='<div class="empty">Click the main <strong>Refresh Google Sheet</strong> button first.</div>';
-    finishButton();
     return false;
   }
 
@@ -1489,7 +1510,6 @@ async function refresh(o){
 
   if(!Object.keys(merged.sheets).length){
     if(root)root.innerHTML='<div class="empty">Could not load Receivables Intelligence. No receivable scope returned data.</div>';
-    finishButton();
     return false;
   }
 
@@ -1504,7 +1524,6 @@ async function refresh(o){
     note.textContent='Some optional receivable sources did not refresh: '+failures.join(', ')+'. Existing data was retained where available.';
     root.prepend(note);
   }
-  finishButton();
   return true;
 }
 function wrap(){
@@ -1523,14 +1542,13 @@ function boot(){
 
   // Receive the exact payload loaded by app.js.
   window.addEventListener('googleSheetPayloadReady',function(e){
-    const payload=e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD;
-    if(payloadHasReceivables(payload))applyPayload(payload);
+    applyPayload(e&&e.detail?e.detail:window.GOOGLE_SHEET_RAW_PAYLOAD);
   });
 
   const t=setInterval(()=>{
     ui();
     wrap();
-    if(payloadHasReceivables(window.GOOGLE_SHEET_RAW_PAYLOAD)){
+    if(window.GOOGLE_SHEET_RAW_PAYLOAD){
       applyPayload(window.GOOGLE_SHEET_RAW_PAYLOAD);
       clearInterval(t);
     }

@@ -1,6 +1,6 @@
 (function(global){
 'use strict';
-const VERSION='6.3.1';
+const VERSION='6.3.2';
 
 function load(src){
   return new Promise((resolve,reject)=>{
@@ -67,7 +67,7 @@ function renderManager(){
   const cfg=global.FIP_CONFIG.data,status=global.FIP_CONFIG.status,r=rowsForConfig(cfg);
   const sourceStatus=status.error?'error':status.source;
   overlay.innerHTML=`<div class="fip-manager">
-    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.3.1 · Parallel Refresh</p></div><button data-close>×</button></header>
+    <header><div><h2>Al Laith Finance Intelligence Platform</h2><p>FIP 6.3.2 · Receivables Detail UX</p></div><button data-close>×</button></header>
     <div class="fip-manager-toolbar">
       <div><strong>Configuration:</strong> ${global.FIP_COMPONENTS.statusBadge(sourceStatus)}
         <strong>Rules:</strong> ${global.FIP_COMPONENTS.statusBadge('loaded')}
@@ -126,7 +126,7 @@ function renderManager(){
 function managerButton(){
   let b=document.getElementById('fipManagerButton');
   if(!b){b=document.createElement('button');b.id='fipManagerButton';b.type='button';document.body.appendChild(b)}
-  b.innerHTML='<span>FIP</span><small>6.3.1</small>';b.title='Open FIP 6.3.1';b.onclick=renderManager;
+  b.innerHTML='<span>FIP</span><small>6.3.2</small>';b.title='Open FIP 6.3.2';b.onclick=renderManager;
 }
 function styles(){
   if(document.getElementById('fipManagerStyles'))document.getElementById('fipManagerStyles').remove();

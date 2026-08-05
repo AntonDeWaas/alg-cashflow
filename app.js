@@ -1692,6 +1692,12 @@ function ensureGoogleProgressUI(){
   `;
   wrap.querySelector('[data-google-progress-dismiss]').addEventListener('click',()=>{
     googleProgressState.active=false;
+    googleProgressState.finishedAt=0;
+    googleProgressState.current='';
+    const details=wrap.querySelector('.gs-progress-details');
+    const detailsButton=wrap.querySelector('[data-google-progress-details]');
+    if(details)details.hidden=true;
+    if(detailsButton)detailsButton.textContent='View details';
     renderGoogleProgress();
   });
   wrap.querySelector('[data-google-progress-details]').addEventListener('click',()=>{
@@ -1825,7 +1831,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.3.1',sheets:{}};
+  const workingPayload={version:'FIP-6.3.2',sheets:{}};
   const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -1966,7 +1972,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.3.1',sheets:{}};
+    const corePayload={version:'FIP-6.3.2',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
