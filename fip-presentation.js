@@ -1,7 +1,7 @@
 // FIP 6.5.3 — landscape presentation and reporting-date standard
 (function(global){
 'use strict';
-const VERSION='6.5.7';
+const VERSION='6.5.8';
 const $=s=>document.querySelector(s);
 
 function reportingDate(){
@@ -86,9 +86,9 @@ function apply(){
 }
 
 function styles(){
-  if(document.getElementById('fipPresentation657Styles'))return;
+  if(document.getElementById('fipPresentation658Styles'))return;
   const s=document.createElement('style');
-  s.id='fipPresentation657Styles';
+  s.id='fipPresentation658Styles';
   s.textContent=`
 :root{--fip-page-max:1920px}
 body{overflow-x:hidden}
@@ -101,7 +101,15 @@ main,.main,.workspace,#appMain{max-width:var(--fip-page-max)!important;width:100
 .hero,.view-hero,[class*="hero"]{padding:18px 22px!important}.hero h1,.hero h2,[class*="hero"] h1,[class*="hero"] h2{font-size:clamp(1.35rem,2vw,1.8rem)!important;margin-bottom:5px!important}.hero p,[class*="hero"] p{max-width:1150px!important;line-height:1.4!important}
 .panel,.card{border-radius:11px}
 table{font-size:clamp(.76rem,.76vw,.88rem)}
-#view-liquidity .liq-command-table{margin-top:4px}
+#view-liquidity .liq-command-table{margin-top:4px;width:100%!important}
+#view-liquidity #liquiditySummary,
+#view-liquidity #liquiditySummary>.liq-command-table,
+#view-liquidity #liquidityCommandToolbar,
+#view-liquidity #liquidityViewMode{width:100%!important;max-width:none!important}
+#view-liquidity .card:has(#liquiditySummary),
+#view-liquidity .panel:has(#liquiditySummary){width:100%!important;max-width:none!important}
+#view-liquidity .liq-group-row{min-height:34px!important}
+#view-liquidity .liq-group-button{padding:7px 10px!important}
 #view-liquidity .liq-main-scroll{max-height:72vh!important}
 #view-liquidity #liquidityKpis{grid-template-columns:repeat(5,minmax(145px,1fr))!important}
 #view-liquidity #liquidityBridge table{font-size:.78rem}

@@ -47,8 +47,8 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-window.FIP_APP_RUNTIME_VERSION='6.5.7';
-document.documentElement.setAttribute('data-fip-app-version','6.5.7');
+window.FIP_APP_RUNTIME_VERSION='6.5.8';
+document.documentElement.setAttribute('data-fip-app-version','6.5.8');
 
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
@@ -456,11 +456,17 @@ function renderExecutiveSummary(){
   if(!$('execKpis')) return; ensureMgmtDefaults(); syncVarianceSelectors();
   const g=FORECAST_DATA.group, months=monthsOnly(g.monthlySummary), year=g.monthlySummary.find(x=>x.month==='Year Total')||{};
   const first=months[0]||{}, last=months[months.length-1]||{};
+  const sourceOpeningValues=cashPositionValues('opening');
+  const sourceOpening=Number(sourceOpeningValues&&sourceOpeningValues[0]);
+  const executiveOpening=
+    Number(first.opening)||
+    Number(year.opening)||
+    (Number.isFinite(sourceOpening)?sourceOpening:0);
   const net=(Number(year.inflows)||0)-(Number(year.outflows)||0);
   const reportDate = reportDateDisplay();
   $('execAsOf').textContent=(reportDate?`As at ${reportDate} · `:`As of ${FORECAST_DATA.asOf||'latest upload'} · `)+`figures in AED '000`;
   $('execKpis').innerHTML=[
-    ['Opening Cash',alpsFmt(first.opening),'Start of forecast',''],['Closing Cash',alpsFmt(last.closing),'End of forecast',alpsValClass(last.closing)],['Total Collections',alpsFmt(year.inflows),'Forecast inflows','pos'],['Total Payments',alpsFmt(year.outflows),'Forecast outflows','neg'],['Net Movement',alpsFmt(net),'Inflows less outflows',alpsValClass(net)],['Funding Gap',alpsFmt(calcFundingGap()),'Threshold shortfall','neg']
+    ['Opening Cash',alpsFmt(executiveOpening),'Start of forecast',''],['Closing Cash',alpsFmt(last.closing),'End of forecast',alpsValClass(last.closing)],['Total Collections',alpsFmt(year.inflows),'Forecast inflows','pos'],['Total Payments',alpsFmt(year.outflows),'Forecast outflows','neg'],['Net Movement',alpsFmt(net),'Inflows less outflows',alpsValClass(net)],['Funding Gap',alpsFmt(calcFundingGap()),'Threshold shortfall','neg']
   ].map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
   renderExeSummaryBlocks(FORECAST_DATA.exeSummary || []);
   renderFundingAlerts(); renderThresholdTable(); renderVarianceTable();
@@ -1064,7 +1070,15 @@ function liquidityDetailPeriodRows(){
 
     if(r.type==='section'){
       const found=sectionMap.find(x=>x[0].test(label));
-      if(found) currentGroup=found[1];
+
+      /*
+       * ALG-CB contains title/month/period rows formatted as sections.
+       * They do not carry cash-flow figures and create large green blocks.
+       * Keep only genuine cash-flow grouping rows.
+       */
+      if(!found)return;
+
+      currentGroup=found[1];
       add(label,periods.map(()=>null),'section',currentGroup);
       return;
     }
@@ -1109,7 +1123,17 @@ function liquidityDetailPeriodRows(){
     'total','Cash Position'
   );
 
-  return {periods,rows,basis};
+  const compactRows=[];
+  rows.forEach(row=>{
+    const previous=compactRows[compactRows.length-1];
+    if(row.type==='section'&&previous&&previous.type==='section'&&
+       cleanText(previous.groupName)===cleanText(row.groupName)){
+      return;
+    }
+    compactRows.push(row);
+  });
+
+  return {periods,rows:compactRows,basis};
 }
 function liquidityDetailPeriodRows_backup(){
   const group=liquidityGroupSource();
@@ -1420,10 +1444,19 @@ function injectLiquidityCommandStyles(){
   const style=document.createElement('style');
   style.id='fipLiquidity650Styles';
   style.textContent=`
-.liq-command-toolbar{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:12px 0;padding:12px;background:#f7f4ed;border:1px solid #ddd4c6;border-radius:10px}
+.liq-command-toolbar{
+  display:grid;grid-template-columns:auto minmax(260px,1fr) auto;
+  align-items:end;gap:12px;width:100%;box-sizing:border-box;
+  margin:8px 0;padding:10px 12px;background:#f7f4ed;
+  border:1px solid #ddd4c6;border-radius:10px
+}
 .liq-control-group{display:flex;flex-direction:column;gap:5px}.liq-control-label{font-size:.72rem;font-weight:900;color:#53606c;text-transform:uppercase;letter-spacing:.05em}
 .liq-segmented{display:flex;border:1px solid #c9c1b5;border-radius:9px;overflow:hidden;background:#fff}.liq-segmented button{border:0;border-right:1px solid #d8d0c4;background:#fff;padding:8px 11px;font-weight:800;color:#29435d;cursor:pointer}.liq-segmented button:last-child{border-right:0}.liq-segmented button.active{background:#0c554a;color:#fff}
 .liq-search-group{min-width:260px;flex:1}.liq-search-group input{width:100%;border:1px solid #cbc3b7;border-radius:8px;padding:8px 10px;background:#fff}
+#liquidityViewMode{width:100%!important;max-width:none!important;box-sizing:border-box}
+#liquidityViewNote{display:block;margin:5px 0 0!important;font-size:.72rem!important;line-height:1.25;color:#65717b}
+#view-liquidity .liq-command-toolbar{max-width:none!important}
+#view-liquidity .liq-command-table{margin-top:8px!important}
 .liq-toolbar-actions{display:flex;gap:7px}.liq-toolbar-actions button{border:1px solid #cbc3b7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800;color:#29435d;cursor:pointer}
 .liq-command-table{border:1px solid #ddd5c8;border-radius:10px;overflow:hidden;background:#fff}
 .liq-main-scroll{max-height:650px;overflow:auto;scrollbar-gutter:stable both-edges}
@@ -1455,7 +1488,7 @@ function injectLiquidityCommandStyles(){
 .liq-report-table tr.total td{font-weight:900;background:#f7f0df;border-top:1px solid #d4c6a9}
 .liq-report-table tr.liq-cash-row td{background:#edf5ef;font-weight:900}
 .liq-report-table .pos{color:#08755e}.liq-report-table .neg{color:#b7392e}
-@media(max-width:800px){.liq-command-toolbar{align-items:stretch}.liq-control-group,.liq-toolbar-actions{width:100%}.liq-toolbar-actions button{flex:1}.liq-report-table th:first-child,.liq-report-table td:first-child{min-width:230px;max-width:230px}}`;
+@media(max-width:800px){.liq-command-toolbar{display:flex;align-items:stretch}.liq-control-group,.liq-toolbar-actions{width:100%}.liq-toolbar-actions button{flex:1}.liq-report-table th:first-child,.liq-report-table td:first-child{min-width:230px;max-width:230px}}`;
   document.head.appendChild(style);
 }
 function liquidityDetailRows(){
@@ -1623,7 +1656,7 @@ window.getLiquiditySourceDiagnostics=function(){
   const current=getCurrentReportingPeriodInfo();
   const closing=closingRowForGroup(group);
   return {
-    version:'6.5.7',
+    version:'6.5.8',
     reportingDate:rpt?rpt.toISOString().slice(0,10):null,
     currentPeriod:current?{
       index:current.index,
@@ -2070,7 +2103,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.5.7',sheets:{}};
+  const workingPayload={version:'FIP-6.5.8',sheets:{}};
   const concurrency=Math.min(3,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -2263,7 +2296,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.5.7',sheets:{}};
+    const corePayload={version:'FIP-6.5.8',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');

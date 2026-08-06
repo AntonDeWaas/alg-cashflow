@@ -52,6 +52,17 @@ function hmap(headers){const m={};headers.forEach((h,i)=>{const n=norm(h);if(!n)
 ].forEach(([k,rx])=>{if(m[k]==null&&rx.test(n))m[k]=i})});return m}
 const BK=['0_30','31_60','61_90','91_120','121_150','151_180','181_210','211_240','241_270','271_300','301_330','331_365','366_730','gt731'];
 const BK_LABELS=['0–30','31–60','61–90','91–120','121–150','151–180','181–210','211–240','241–270','271–300','301–330','331–365','366–730','>731'];
+function agingBucketClass(index){
+  if(index>=6)return'recv-age-red';
+  if(index>=3)return'recv-age-amber';
+  return'recv-age-current';
+}
+function agingHeaderClass(index){
+  if(index>=6)return'recv-age-head-red';
+  if(index>=3)return'recv-age-head-amber';
+  return'recv-age-head-current';
+}
+
 function agingRangeAmount(row,from,to,factor){
   return BK.slice(from,to+1).reduce((a,k)=>a+(Number(row.buckets&&row.buckets[k])||0),0)*(factor||1);
 }
@@ -1058,7 +1069,7 @@ function renderAgingDetail(rs){
     });
     return `<tr><td class="recv-customer-name">${esc(x.r.customer)}</td>
       <td>${esc(x.r.entityLabel||x.r.entityId||'')}</td><td>${esc(x.r.division)}</td>
-      ${vals.map((v,i)=>`<td class="num ${f.from+i>=6?'recv-age-red':f.from+i>=3?'recv-age-amber':''}">${fmt(v)}</td>`).join('')}
+      ${vals.map((v,i)=>`<td class="num ${agingBucketClass(f.from+i)}">${fmt(v)}</td>`).join('')}
       ${fullRange?'':`<td class="num recv-range-total">${fmt(x.range)}</td>`}
       <td class="num recv-total-final">${fmt(x.total)}</td></tr>`;
   }).join('');
@@ -1073,10 +1084,10 @@ function renderAgingDetail(rs){
     <div class="recv-table-wrap recv-aging-detail-scroll recv-landscape-scroll">
       <table class="recv-table recv-aging-detail-table">
         <thead><tr><th>Customer</th><th>Entity</th><th>Division</th>
-          ${selectedLabels.map(h=>`<th>${h}</th>`).join('')}${extraHeader}<th>Total</th></tr></thead>
+          ${selectedLabels.map((h,i)=>`<th class="${agingHeaderClass(f.from+i)}">${h}</th>`).join('')}${extraHeader}<th class="recv-total-head">Total</th></tr></thead>
         <tbody>${body||`<tr><td colspan="${colspan}" class="empty">No balances match the selected filters.</td></tr>`}</tbody>
         <tfoot><tr class="recv-summary-total"><td>Grand Total</td><td></td><td></td>
-          ${totals.buckets.map(v=>`<td class="num">${fmt(v)}</td>`).join('')}${extraTotal}<td class="num">${fmt(totals.total)}</td></tr></tfoot>
+          ${totals.buckets.map((v,i)=>`<td class="num ${agingBucketClass(f.from+i)}">${fmt(v)}</td>`).join('')}${extraTotal}<td class="num recv-total-final">${fmt(totals.total)}</td></tr></tfoot>
       </table>
     </div></div>`;
 }
@@ -1597,12 +1608,11 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .recv-age-red{
   background:#fde7e4!important;color:#b42318!important;font-weight:800
 }
-#view-receivables .recv-aging-detail-table th:nth-child(n+8):nth-child(-n+10){
-  background:#b7791f!important
-}
-#view-receivables .recv-aging-detail-table th:nth-child(n+11){
-  background:#b42318!important
-}
+#view-receivables .recv-aging-detail-table th.recv-age-head-current{background:#0b3767!important}
+#view-receivables .recv-aging-detail-table th.recv-age-head-amber{background:#b7791f!important}
+#view-receivables .recv-aging-detail-table th.recv-age-head-red{background:#b42318!important}
+#view-receivables .recv-aging-detail-table th.recv-total-head{background:#374151!important}
+#view-receivables .recv-age-current{background:#f8fafc!important;color:#1f2937!important}
 #view-receivables .recv-kpi .val.neg{color:#b42318!important}
 #view-receivables .recv-kpi .val.warn{color:#b7791f!important}
 
