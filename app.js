@@ -47,8 +47,8 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-window.FIP_APP_RUNTIME_VERSION='6.5.6';
-document.documentElement.setAttribute('data-fip-app-version','6.5.6');
+window.FIP_APP_RUNTIME_VERSION='6.5.7';
+document.documentElement.setAttribute('data-fip-app-version','6.5.7');
 
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
@@ -116,7 +116,7 @@ function renderDashboard(){
   // The Consolidated tab must be driven by the imported Group Forecast,
   // not the separate transaction-entry ledger. This keeps it aligned with
   // the Group Forecast and Business Unit forecast tabs.
-  const group = (typeof FORECAST_DATA !== 'undefined' && FORECAST_DATA.group) ? FORECAST_DATA.group : null;
+  const group = (typeof liquidityGroupSource==='function' ? liquidityGroupSource() : ((typeof FORECAST_DATA !== 'undefined' && FORECAST_DATA.group) ? FORECAST_DATA.group : null));
   if(!group || !group.monthlySummary){
     const c=consolidated();
     $('consSummary').innerHTML=summaryTable(c.months, c.totalOpen);
@@ -136,7 +136,8 @@ function renderDashboard(){
     outflows: months.reduce((a,m)=>a+m.outflow,0),
     closing: months[months.length-1]?.closing || 0
   };
-  const opening = Number(year.opening)||Number(months[0]?.opening)||0;
+  const sourceOpening=Number(cashPositionValues('opening')[0]);
+  const opening = Number(year.opening)||Number(months[0]?.opening)||(Number.isFinite(sourceOpening)?sourceOpening:0);
   const inSum = Number(year.inflows)||months.reduce((a,m)=>a+m.inflow,0);
   const outSum = Number(year.outflows)||months.reduce((a,m)=>a+m.outflow,0);
   const closing = Number(year.closing)||Number(months[months.length-1]?.closing)||0;
@@ -931,6 +932,17 @@ function getCurrentReportingPeriodInfo(){
   prior.sort((a,b)=>b.date-a.date || b.index-a.index);
   return prior[0]||null;
 }
+function cashPositionRow(group,kind){
+  const rows=(group&&group.rows)||[];
+  const opening=/\b(?:Est(?:imated)?\.?\s*)?Cash\s*(?:Balance|Bal)\b.*\bBeginning\b|\bOpening\s*(?:Cash\s*)?Balance\b/i;
+  const closing=/\b(?:Est(?:imated)?\.?\s*)?Cash\s*(?:Balance|Bal)\b.*\bEnd\b|\bEnding\s*(?:Cash\s*)?Balance\b|\bClosing\s*(?:Cash\s*)?Balance\b/i;
+  const pattern=kind==='opening'?opening:closing;
+  return rows.find(r=>pattern.test(cleanText(r.label||'')))||null;
+}
+function cashPositionValues(kind){
+  const row=cashPositionRow(liquidityGroupSource(),kind);
+  return row?(row.values||[]):[];
+}
 function groupRowValues(pattern){
   const group=liquidityGroupSource();
   const row=(group.rows||[]).find(r=>pattern.test(cleanText(r.label||'')));
@@ -983,10 +995,10 @@ function liquidityAtPeriodIndex(idx){
   const vatIdx=vatBenefitTargetIndex(periods);
   const applyVatToInflow=(vatIdx===idx);
   const applyVatToClosing=(vatIdx>=0 && idx>=vatIdx);
-  const openingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
+  const openingVals=cashPositionValues('opening');
   const inflowVals=groupRowValues(/^Total Inflows$/i);
   const outflowVals=groupRowValues(/^Total Outflows$/i);
-  const closingVals=groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
+  const closingVals=cashPositionValues('closing');
   const gOpening=Number(openingVals[idx])||0;
   const gInflows=Number(inflowVals[idx])||0;
   const gOutflows=Number(outflowVals[idx])||0;
@@ -1025,10 +1037,10 @@ function liquidityDetailPeriodRows(){
     rows.push({label,values,type,groupName});
   };
 
-  const openingGroup=groupRowValues(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i);
+  const openingGroup=cashPositionValues('opening');
   const inflowGroup=groupRowValues(/^Total Inflows$/i);
   const outflowGroup=groupRowValues(/^Total Outflows$/i);
-  const closingGroup=groupRowValues(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i);
+  const closingGroup=cashPositionValues('closing');
 
   add(
     operational?'Estimated Cash Balance Opening (Excl. Qiddiya)':'Estimated Cash Balance Opening',
@@ -1057,8 +1069,8 @@ function liquidityDetailPeriodRows(){
       return;
     }
 
-    if(/Estimated Cash\s*(Balance|Bal).*Beginning|Opening Balance/i.test(label)) return;
-    if(/Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i.test(label)) return;
+    if(cashPositionRow({rows:[r]},'opening')) return;
+    if(cashPositionRow({rows:[r]},'closing')) return;
 
     if(operational && /Project Qiddiya (Inflow|Outflow)/i.test(label)) return;
 
@@ -1252,6 +1264,7 @@ function renderLiquidityPeriodTable(){
 
   const shownPeriods=selected.map(i=>periods[i]);
   const headers=shownPeriods.map(p=>`<th>${escapeHtml(periodShortLabel(p))}</th>`).join('');
+  const colgroup=`<colgroup><col class="liq-label-col">${shownPeriods.map(()=>'<col class="liq-value-col">').join('')}</colgroup>`;
 
   let activeGroup='Other';
   const body=[];
@@ -1287,7 +1300,7 @@ function renderLiquidityPeriodTable(){
     <div class="liq-command-table">
       <div class="liq-top-scroll" aria-label="Top horizontal scrollbar"><div></div></div>
       <div class="liq-main-scroll">
-        <table class="sticky-report liq-report-table liq-mode-${escapeHtml(localStorage.getItem('cf_liquidity_time_view')||'weekly')}">
+        <table class="sticky-report liq-report-table liq-mode-${escapeHtml(localStorage.getItem('cf_liquidity_time_view')||'weekly')}">${colgroup}
           <thead><tr><th>${escapeHtml(title)}</th>${headers}</tr></thead>
           <tbody>${body.join('')}</tbody>
         </table>
@@ -1420,7 +1433,10 @@ function injectLiquidityCommandStyles(){
 .liq-report-table th:first-child,.liq-report-table td:first-child{position:sticky;left:0;z-index:15;min-width:320px;max-width:320px;background:#fbf8f1;box-shadow:5px 0 8px -7px rgba(0,0,0,.7)}
 .liq-report-table thead th:first-child{z-index:30;background:#efe9dd!important}
 .liq-report-table th:not(:first-child),.liq-report-table td:not(:first-child){min-width:112px}
-.liq-report-table.liq-mode-monthly{font-family:Calibri,Arial,sans-serif!important}
+.liq-report-table.liq-mode-monthly{font-family:Calibri,Arial,sans-serif!important;width:max-content!important;table-layout:fixed!important}
+.liq-report-table.liq-mode-monthly col.liq-label-col{width:215px!important}
+.liq-report-table.liq-mode-monthly col.liq-value-col{width:76px!important}
+
 .liq-report-table.liq-mode-monthly th:first-child,
 .liq-report-table.liq-mode-monthly td:first-child{min-width:215px!important;max-width:215px!important}
 .liq-report-table.liq-mode-monthly th:not(:first-child),
@@ -1504,12 +1520,7 @@ function sameDay(a, b){
     a.getDate() === b.getDate();
 }
 
-function closingRowForGroup(group){
-  return (group.rows||[]).find(r=>
-    /Estimated Cash\s*(Balance|Bal).*End|Cash\s*(Balance|Bal).*End|Ending Cash Balance|Closing Balance/i
-      .test(cleanText(r.label||''))
-  )||null;
-}
+function closingRowForGroup(group){ return cashPositionRow(group,'closing'); }
 function sourceIndexAtReportingDate(items, reportDate){
   const exact=[];
   const prior=[];
@@ -1612,7 +1623,7 @@ window.getLiquiditySourceDiagnostics=function(){
   const current=getCurrentReportingPeriodInfo();
   const closing=closingRowForGroup(group);
   return {
-    version:'6.5.6',
+    version:'6.5.7',
     reportingDate:rpt?rpt.toISOString().slice(0,10):null,
     currentPeriod:current?{
       index:current.index,
@@ -2059,7 +2070,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.5.6',sheets:{}};
+  const workingPayload={version:'FIP-6.5.7',sheets:{}};
   const concurrency=Math.min(3,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -2252,7 +2263,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.5.6',sheets:{}};
+    const corePayload={version:'FIP-6.5.7',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
