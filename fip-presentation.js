@@ -1,7 +1,7 @@
 // FIP 6.5.3 — landscape presentation and reporting-date standard
 (function(global){
 'use strict';
-const VERSION='6.5.4';
+const VERSION='6.5.5';
 const $=s=>document.querySelector(s);
 
 function reportingDate(){
@@ -86,9 +86,9 @@ function apply(){
 }
 
 function styles(){
-  if(document.getElementById('fipPresentation654Styles'))return;
+  if(document.getElementById('fipPresentation655Styles'))return;
   const s=document.createElement('style');
-  s.id='fipPresentation654Styles';
+  s.id='fipPresentation655Styles';
   s.textContent=`
 :root{--fip-page-max:1920px}
 body{overflow-x:hidden}
@@ -102,7 +102,7 @@ main,.main,.workspace,#appMain{max-width:var(--fip-page-max)!important;width:100
 .panel,.card{border-radius:11px}
 table{font-size:clamp(.76rem,.76vw,.88rem)}
 #view-liquidity .liq-command-table{margin-top:4px}
-#view-liquidity .liq-main-scroll{max-height:70vh!important}
+#view-liquidity .liq-main-scroll{max-height:72vh!important}
 #view-liquidity #liquidityKpis{grid-template-columns:repeat(5,minmax(145px,1fr))!important}
 #view-liquidity #liquidityBridge table{font-size:.78rem}
 #view-dashboard #chart,#view-consolidated #chart{width:100%;height:clamp(260px,32vw,390px)}
@@ -136,9 +136,7 @@ table{font-size:clamp(.76rem,.76vw,.88rem)}
   top:0;
   z-index:30;
 }
-#view-liquidity #liquidityBridge{
-  margin-top:18px!important;
-}
+#view-liquidity #liquidityBridge{margin-top:18px!important}
 
 @media (min-width:1400px){
   #view-receivables .recv-panel,#view-liquidity .panel{padding:16px 18px}

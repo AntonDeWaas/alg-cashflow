@@ -34,6 +34,7 @@ const MOVEMENT_CONFIG={
 const S={payload:null,entity:'GROUP',section:'overview',parsed:{},updated:null,wrapped:false,
   agingFilter:{from:0,to:13,min:0,search:''},
   movementFilter:{from:6,to:13,min:0,search:''},
+  customerFilter:{entity:'ALL',division:'ALL',customer:'',minimum:0},
   collection:{year:null,month:null,country:'GROUP',entity:'GROUP',division:'ALL',coreOnly:false}};
 const $=id=>document.getElementById(id),clean=v=>String(v==null?'':v).replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 const esc=v=>clean(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
@@ -147,6 +148,19 @@ function parseEntity(e){
 }
 function parseAll(){S.parsed={};C.entities.filter(e=>e.id!=='GROUP').forEach(e=>S.parsed[e.id]=parseEntity(e))}
 function rows(){return S.entity==='GROUP'?Object.values(S.parsed).flatMap(x=>x.rows):(S.parsed[S.entity]||{rows:[]}).rows}
+
+function rowAgingMetrics(r,factor){
+  const f=Number(factor)||1;
+  const bucket=k=>(Number(r.buckets&&r.buckets[k])||0)*f;
+  const total=(S.entity==='GROUP'?Number(r.totalAED):Number(r.total))||0;
+  const under90=BK.slice(0,3).reduce((a,k)=>a+bucket(k),0);
+  const over60=BK.slice(2).reduce((a,k)=>a+bucket(k),0);
+  const over90=BK.slice(3).reduce((a,k)=>a+bucket(k),0);
+  const over180=BK.slice(6).reduce((a,k)=>a+bucket(k),0);
+  const over1yr=bucket('366_730')+bucket('gt731');
+  const over2yr=bucket('gt731');
+  return {total,under90,over60,over90,over180,over1yr,over2yr};
+}
 function aggregate(rs){
   const o={
     total:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0,current:0,
@@ -155,32 +169,22 @@ function aggregate(rs){
   BK.forEach(k=>o.buckets[k]=0);
 
   rs.forEach(r=>{
-    const f=S.entity==='GROUP'?r.fx:1,
-      t=S.entity==='GROUP'?r.totalAED:r.total,
-      o60=(BK.slice(2).reduce((a,k)=>a+(r.buckets[k]||0),0))*f,
-      o90=S.entity==='GROUP'?r.over90AED:r.over90,
-      o180=S.entity==='GROUP'?r.over180AED:r.over180,
-      o1=((r.buckets['366_730']||0)+(r.buckets.gt731||0))*f,
-      o2=(r.buckets.gt731||0)*f;
-
-    o.total+=t;
-    o.over60+=Math.min(t,Math.max(0,o60));
-    o.over90+=o90;
-    o.over180+=o180;
-    o.over1yr+=Math.min(t,Math.max(0,o1));
-    o.over2yr+=Math.min(t,Math.max(0,o2));
-    o.current+=t-o90;
+    const factor=S.entity==='GROUP'?r.fx:1;
+    const m=rowAgingMetrics(r,factor);
+    o.total+=m.total;
+    o.over60+=m.over60;
+    o.over90+=m.over90;
+    o.over180+=m.over180;
+    o.over1yr+=m.over1yr;
+    o.over2yr+=m.over2yr;
+    o.current+=m.under90;
 
     const key=r.division||'Unassigned';
-    if(!o.divisions[key])o.divisions[key]={total:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0};
-    o.divisions[key].total+=t;
-    o.divisions[key].over60+=Math.min(t,Math.max(0,o60));
-    o.divisions[key].over90+=o90;
-    o.divisions[key].over180+=o180;
-    o.divisions[key].over1yr+=Math.min(t,Math.max(0,o1));
-    o.divisions[key].over2yr+=Math.min(t,Math.max(0,o2));
-
-    BK.forEach(k=>o.buckets[k]+=(r.buckets[k]||0)*f);
+    if(!o.divisions[key]){
+      o.divisions[key]={total:0,under90:0,over60:0,over90:0,over180:0,over1yr:0,over2yr:0};
+    }
+    Object.keys(o.divisions[key]).forEach(k=>o.divisions[key][k]+=m[k]||0);
+    BK.forEach(k=>o.buckets[k]+=(Number(r.buckets&&r.buckets[k])||0)*factor);
   });
   return o;
 }
@@ -189,10 +193,60 @@ function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerH
 function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Aging Movement by Bracket'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
+
+function customerFilterOptions(rs){
+  const entities=[...new Set(rs.map(r=>r.entityLabel||r.entityId).filter(Boolean))].sort();
+  const divisions=[...new Set(rs.map(r=>r.division||'Unassigned').filter(Boolean))].sort();
+  const f=S.customerFilter;
+  return `<div class="recv-customer-filters">
+    <label>Entity<select data-customer-filter="entity">
+      <option value="ALL">All entities</option>
+      ${entities.map(x=>`<option value="${esc(x)}" ${f.entity===x?'selected':''}>${esc(x)}</option>`).join('')}
+    </select></label>
+    <label>Division<select data-customer-filter="division">
+      <option value="ALL">All divisions</option>
+      ${divisions.map(x=>`<option value="${esc(x)}" ${f.division===x?'selected':''}>${esc(x)}</option>`).join('')}
+    </select></label>
+    <label class="recv-customer-search">Customer<input data-customer-filter="customer" type="search"
+      value="${esc(f.customer||'')}" placeholder="Customer name…"></label>
+    <label>Minimum Outstanding<input data-customer-filter="minimum" type="number" min="0" step="1000"
+      value="${Number(f.minimum)||0}"></label>
+    <button type="button" data-customer-filter-reset>Reset</button>
+  </div>`;
+}
+function applyCustomerFilter(rs,field){
+  const f=S.customerFilter;
+  const valueField=S.entity==='GROUP'?field+'AED':field;
+  const q=clean(f.customer).toLowerCase();
+  return rs.filter(r=>{
+    const entity=r.entityLabel||r.entityId||'';
+    if(f.entity!=='ALL'&&entity!==f.entity)return false;
+    if(f.division!=='ALL'&&(r.division||'Unassigned')!==f.division)return false;
+    if(q&&!clean(r.customer).toLowerCase().includes(q))return false;
+    if((Number(r[valueField])||0)<(Number(f.minimum)||0))return false;
+    return (Number(r[valueField])||0)>0;
+  });
+}
+function bindCustomerFilters(){
+  const root=document.querySelector('.recv-customer-filters');
+  if(!root)return;
+  root.querySelectorAll('[data-customer-filter]').forEach(control=>{
+    control.onchange=control.oninput=()=>{
+      const key=control.dataset.customerFilter;
+      S.customerFilter[key]=key==='minimum'?(Number(control.value)||0):clean(control.value);
+      content();
+    };
+  });
+  const reset=root.querySelector('[data-customer-filter-reset]');
+  if(reset)reset.onclick=()=>{
+    S.customerFilter={entity:'ALL',division:'ALL',customer:'',minimum:0};
+    content();
+  };
+}
 function topTable(rs,field,title){
   const ccy=currency(),
     f=S.entity==='GROUP'?field+'AED':field,
-    sorted=rs.filter(r=>r[f]>0).sort((a,b)=>b[f]-a[f]),
+    sorted=applyCustomerFilter(rs,field).sort((a,b)=>b[f]-a[f]),
     grand=sorted.reduce((a,r)=>a+r[f],0);
 
   return`<div class="card panel recv-panel">
@@ -267,16 +321,12 @@ function entityDivisionSummary(rs){
       entity,division,divCode,total:0,under90:0,over90:0,over1yr:0,over2yr:0
     };
 
-    const total=(S.entity==='GROUP'?r.totalAED:r.total);
-    const over90=(S.entity==='GROUP'?r.over90AED:r.over90);
-    const over1yr=((r.buckets['366_730']||0)+(r.buckets.gt731||0))*factor;
-    const over2yr=(r.buckets.gt731||0)*factor;
-
-    grouped[key].total+=total;
-    grouped[key].over90+=Math.min(total,Math.max(0,over90));
-    grouped[key].under90+=Math.max(0,total-Math.min(total,Math.max(0,over90)));
-    grouped[key].over1yr+=Math.min(total,Math.max(0,over1yr));
-    grouped[key].over2yr+=Math.min(total,Math.max(0,over2yr));
+    const metrics=rowAgingMetrics(r,factor);
+    grouped[key].total+=metrics.total;
+    grouped[key].over90+=metrics.over90;
+    grouped[key].under90+=metrics.under90;
+    grouped[key].over1yr+=metrics.over1yr;
+    grouped[key].over2yr+=metrics.over2yr;
   });
 
   const detail=Object.values(grouped).sort((a,b)=>
@@ -377,34 +427,58 @@ function aging(a,rs){
   const c=currency(),
     labels={'0_30':'0–30','31_60':'31–60','61_90':'61–90','91_120':'91–120','121_150':'121–150','151_180':'151–180','181_210':'181–210','211_240':'211–240','241_270':'241–270','271_300':'271–300','301_330':'301–330','331_365':'331–365','366_730':'366–730','gt731':'>731'},
     items=Object.keys(labels).map(k=>({label:labels[k],value:a.buckets[k]})),
-    dr=Object.entries(a.divisions).sort((x,y)=>y[1].total-x[1].total).map(([d,x])=>{
-      const under90=Math.max(0,x.total-x.over90),
-        pUnder90=x.total?under90/x.total*100:0,
-        p60=x.total?x.over60/x.total*100:0,
-        p90=x.total?x.over90/x.total*100:0,
-        p1=x.total?x.over1yr/x.total*100:0,
-        p2=x.total?x.over2yr/x.total*100:0;
-      return `<tr>
-        <td class="rowhead">${esc(d)}</td>
-        <td class="num">${fmt(x.total)}</td>
-        <td class="num">${fmt(under90)}</td>
-        <td class="num recv-pct-cell">${pct(pUnder90)}</td>
-        <td class="num">${fmt(x.over60)}</td>
-        <td class="num recv-pct-cell">${pct(p60)}</td>
-        <td class="num">${fmt(x.over90)}</td>
-        <td class="num recv-pct-cell">${pct(p90)}</td>
-        <td class="num">${fmt(x.over1yr)}</td>
-        <td class="num recv-pct-cell">${pct(p1)}</td>
-        <td class="num">${fmt(x.over2yr)}</td>
-        <td class="num recv-pct-cell">${pct(p2)}</td>
-      </tr>`;
-    }).join('');
+    divisionEntries=Object.entries(a.divisions).sort((x,y)=>y[1].total-x[1].total);
+
+  const totals={total:0,under90:0,over60:0,over90:0,over1yr:0,over2yr:0};
+  const dr=divisionEntries.map(([d,x])=>{
+    Object.keys(totals).forEach(k=>totals[k]+=Number(x[k])||0);
+    const pUnder90=x.total?x.under90/x.total*100:0,
+      p60=x.total?x.over60/x.total*100:0,
+      p90=x.total?x.over90/x.total*100:0,
+      p1=x.total?x.over1yr/x.total*100:0,
+      p2=x.total?x.over2yr/x.total*100:0;
+    return `<tr>
+      <td class="rowhead">${esc(d)}</td>
+      <td class="num">${fmt(x.total)}</td>
+      <td class="num">${fmt(x.under90)}</td>
+      <td class="num recv-pct-cell">${pct(pUnder90)}</td>
+      <td class="num">${fmt(x.over60)}</td>
+      <td class="num recv-pct-cell">${pct(p60)}</td>
+      <td class="num">${fmt(x.over90)}</td>
+      <td class="num recv-pct-cell">${pct(p90)}</td>
+      <td class="num">${fmt(x.over1yr)}</td>
+      <td class="num recv-pct-cell">${pct(p1)}</td>
+      <td class="num">${fmt(x.over2yr)}</td>
+      <td class="num recv-pct-cell">${pct(p2)}</td>
+    </tr>`;
+  }).join('');
+
+  const totalRow=`<tr class="recv-summary-total">
+    <td class="rowhead">Total</td>
+    <td class="num">${fmt(totals.total)}</td>
+    <td class="num">${fmt(totals.under90)}</td>
+    <td class="num recv-pct-cell">${pct(totals.total?totals.under90/totals.total*100:0)}</td>
+    <td class="num">${fmt(totals.over60)}</td>
+    <td class="num recv-pct-cell">${pct(totals.total?totals.over60/totals.total*100:0)}</td>
+    <td class="num">${fmt(totals.over90)}</td>
+    <td class="num recv-pct-cell">${pct(totals.total?totals.over90/totals.total*100:0)}</td>
+    <td class="num">${fmt(totals.over1yr)}</td>
+    <td class="num recv-pct-cell">${pct(totals.total?totals.over1yr/totals.total*100:0)}</td>
+    <td class="num">${fmt(totals.over2yr)}</td>
+    <td class="num recv-pct-cell">${pct(totals.total?totals.over2yr/totals.total*100:0)}</td>
+  </tr>`;
+
+  const distributionTotal=items.reduce((sum,item)=>sum+(Number(item.value)||0),0);
 
   return `<div class="card panel recv-panel">
     <div class="panelhead"><div><h3>Aging Distribution</h3></div></div>${bars(items,c)}
+    <div class="recv-aging-distribution-total">
+      <strong>Total</strong><span>${esc(c)} ${fmt(distributionTotal)}</span>
+    </div>
   </div>
   <div class="card panel recv-panel">
-    <div class="panelhead"><div><h3>Division Aging Summary</h3><p class="hint">Amounts and percentage of division total</p></div></div>
+    <div class="panelhead"><div><h3>Division Aging Summary</h3>
+      <p class="hint">All values are calculated from the same detailed aging buckets used by Entity &amp; Division reports.</p></div></div>
     <div class="recv-table-wrap"><table class="recv-table recv-aging-table">
       <thead><tr>
         <th>Division</th><th>Total</th>
@@ -414,12 +488,11 @@ function aging(a,rs){
         <th>&gt;1 Year</th><th class="recv-pct-head">&gt;1 Year %</th>
         <th>&gt;2 Years</th><th class="recv-pct-head">&gt;2 Years %</th>
       </tr></thead>
-      <tbody>${dr}</tbody>
+      <tbody>${dr}${totalRow}</tbody>
     </table></div>
   </div>
   ${entityDivisionSummary(rs)}`;
 }
-
 function movementClass(name){
   const n=clean(name).toUpperCase();
   // DR-Movement Details uses short DIV codes, while aging sheets use full names.
@@ -577,12 +650,12 @@ function manualOpening(cfg){
 }
 function movementLines(){
   const details=parseMovementDetails(),last=parseLastPeriod(),lines=[];
-  MOVEMENT_CONFIG.currentBlocks.forEach(cfg=>{
-    if(S.entity!=='GROUP'&&S.entity!==cfg.id)return;
-    const factor=S.entity==='GROUP'?cfg.fx:1;
-    const current=(S.parsed[cfg.id]||{rows:[]}).rows;
-    const movement=(details[cfg.id]||{rows:[]}).rows;
-    const priorInfo=last[cfg.id]||{rows:[],detailTotal:0,summaryTotal:0,summaryDifference:0};
+  MOVEMENT_CONFIG.currentBlocks.forEach(entityCfg=>{
+    if(S.entity!=='GROUP'&&S.entity!==entityCfg.id)return;
+    const factor=S.entity==='GROUP'?entityCfg.fx:1;
+    const current=(S.parsed[entityCfg.id]||{rows:[]}).rows;
+    const movement=(details[entityCfg.id]||{rows:[]}).rows;
+    const priorInfo=last[entityCfg.id]||{rows:[],detailTotal:0,summaryTotal:0,summaryDifference:0};
     const previous=priorInfo.rows;
     ['EPC','S&R','FP','GEN','O&G'].forEach(div=>{
       const cur=current.filter(r=>movementClass(r.division)===div),mov=movement.filter(r=>r.classCode===div),prv=previous.filter(r=>r.classCode===div);
@@ -595,7 +668,7 @@ function movementLines(){
       const agedMovement=ca.over90-pa.over90;
       const agedPct=pa.over90?agedMovement/pa.over90*100:(ca.over90?'NEW':0);
       if(!(pa.total||ca.total||billing||receipt||cheque||advance||creditReverse||creditIssue||pa.over90||ca.over90))return;
-      lines.push({country:cfg.country,entity:cfg.label,entityId:cfg.id,division:div,currency:S.entity==='GROUP'?'AED':cfg(cfg.id).currency,
+      lines.push({country:entityCfg.country,entity:entityCfg.label,entityId:entityCfg.id,division:div,currency:S.entity==='GROUP'?'AED':cfg(entityCfg.id).currency,
         opening:pa.total,billing,receipt,cheque,advance,creditReverse,creditIssue,calculatedClosing,closing:ca.total,reconciliation,
         openingDetailControl:priorInfo.detailTotal*factor,openingSummaryControl:priorInfo.summaryTotal*factor,
         openingControlDifference:priorInfo.summaryDifference*factor,
@@ -1287,7 +1360,10 @@ function renderCollectionsPerformance(){
   return html;
 }
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers')root.innerHTML=`${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a);
+function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers'){
+  root.innerHTML=`${customerFilterOptions(rs)}${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;
+  setTimeout(bindCustomerFilters,0);
+}else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a);
 setTimeout(bindAgingFilterControls,0)}
 catch(err){
   console.error('Receivables render error',err);
@@ -1295,6 +1371,35 @@ catch(err){
 }}
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
+
+#view-receivables .recv-aging-distribution-total{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:10px;padding:10px 12px;border-top:2px solid #173f6d;
+  background:#eef3f8;color:#173f6d;font-size:.9rem
+}
+#view-receivables .recv-customer-filters{
+  display:flex;align-items:end;gap:9px;flex-wrap:wrap;
+  margin:10px 0;padding:10px 12px;background:#f6f3ed;
+  border:1px solid #ded7cc;border-radius:10px
+}
+#view-receivables .recv-customer-filters label{
+  display:flex;flex-direction:column;gap:4px;
+  font-size:.72rem;font-weight:800;color:#53606c;
+  text-transform:uppercase;letter-spacing:.04em
+}
+#view-receivables .recv-customer-filters select,
+#view-receivables .recv-customer-filters input{
+  min-width:145px;border:1px solid #cfc7bb;border-radius:7px;
+  padding:7px 8px;background:#fff;font:inherit
+}
+#view-receivables .recv-customer-filters .recv-customer-search{
+  flex:1;min-width:240px
+}
+#view-receivables .recv-customer-filters button{
+  border:1px solid #cfc7bb;background:#fff;border-radius:7px;
+  padding:8px 12px;font-weight:800;cursor:pointer
+}
+
 #view-receivables .recv-aging-filter-block{margin:10px 0}#view-receivables .recv-aging-filters{display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin:12px 0;padding:10px 12px;background:#f6f3ed;border:1px solid #ded7cc;border-radius:10px}
 #view-receivables .recv-aging-filters label{display:flex;flex-direction:column;gap:4px;font-size:.72rem;font-weight:800;color:#53606c;text-transform:uppercase;letter-spacing:.04em}
 #view-receivables .recv-aging-filters select,#view-receivables .recv-aging-filters input{min-width:120px;border:1px solid #cfc7bb;border-radius:7px;padding:7px 8px;background:#fff;font:inherit}

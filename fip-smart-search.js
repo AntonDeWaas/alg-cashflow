@@ -222,7 +222,7 @@ function replaceOldButton(){
 function boot(){
   style();
   replaceOldButton();
-  global.FIP_SMART_SEARCH={version:'6.5.4',open,close,search,state};
+  global.FIP_SMART_SEARCH={version:'6.5.5',open,close,search,state};
 }
 
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();

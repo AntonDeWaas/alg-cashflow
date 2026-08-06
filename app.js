@@ -47,8 +47,8 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-window.FIP_APP_RUNTIME_VERSION='6.5.4';
-document.documentElement.setAttribute('data-fip-app-version','6.5.4');
+window.FIP_APP_RUNTIME_VERSION='6.5.5';
+document.documentElement.setAttribute('data-fip-app-version','6.5.5');
 
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
@@ -1287,7 +1287,7 @@ function renderLiquidityPeriodTable(){
     <div class="liq-command-table">
       <div class="liq-top-scroll" aria-label="Top horizontal scrollbar"><div></div></div>
       <div class="liq-main-scroll">
-        <table class="sticky-report liq-report-table">
+        <table class="sticky-report liq-report-table liq-mode-${escapeHtml(localStorage.getItem('cf_liquidity_time_view')||'weekly')}">
           <thead><tr><th>${escapeHtml(title)}</th>${headers}</tr></thead>
           <tbody>${body.join('')}</tbody>
         </table>
@@ -1420,6 +1420,16 @@ function injectLiquidityCommandStyles(){
 .liq-report-table th:first-child,.liq-report-table td:first-child{position:sticky;left:0;z-index:15;min-width:320px;max-width:320px;background:#fbf8f1;box-shadow:5px 0 8px -7px rgba(0,0,0,.7)}
 .liq-report-table thead th:first-child{z-index:30;background:#efe9dd!important}
 .liq-report-table th:not(:first-child),.liq-report-table td:not(:first-child){min-width:112px}
+.liq-report-table.liq-mode-monthly{font-family:Calibri,Arial,sans-serif!important}
+.liq-report-table.liq-mode-monthly th:first-child,
+.liq-report-table.liq-mode-monthly td:first-child{min-width:280px!important;max-width:280px!important}
+.liq-report-table.liq-mode-monthly th:not(:first-child),
+.liq-report-table.liq-mode-monthly td:not(:first-child){min-width:88px!important;width:88px!important}
+.liq-report-table.liq-mode-monthly thead th{
+  white-space:normal!important;line-height:1.05!important;
+  font-size:10px!important;padding:7px 4px!important;text-align:center!important
+}
+.liq-report-table.liq-mode-monthly tbody td{font-size:11px!important;padding:7px 6px!important}
 .liq-group-row td{position:sticky!important;left:0!important;z-index:17!important;background:#0b5549!important;color:#fff!important;padding:0!important;max-width:none!important}
 .liq-group-button{width:100%;display:flex;gap:9px;align-items:center;border:0;background:transparent;color:#fff;padding:9px 12px;text-align:left;cursor:pointer}
 .liq-report-table tr.total td{font-weight:900;background:#f7f0df;border-top:1px solid #d4c6a9}
@@ -1598,7 +1608,7 @@ window.getLiquiditySourceDiagnostics=function(){
   const current=getCurrentReportingPeriodInfo();
   const closing=closingRowForGroup(group);
   return {
-    version:'6.5.4',
+    version:'6.5.5',
     reportingDate:rpt?rpt.toISOString().slice(0,10):null,
     currentPeriod:current?{
       index:current.index,
@@ -1968,7 +1978,7 @@ function renderGoogleProgress(){
         '• '+String(item.label||item.scope||item)
       ).join('<br>');
   }else{
-    details.innerHTML='<strong>No optional warnings.</strong><br>Parallel refresh limit: 4 requests.';
+    details.innerHTML='<strong>No optional warnings.</strong><br>Parallel refresh limit: 3 requests · failed scopes receive a final sequential retry.';
   }
 }
 
@@ -2045,8 +2055,8 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.5.4',sheets:{}};
-  const concurrency=Math.min(4,Math.max(1,optionalBatches.length));
+  const workingPayload={version:'FIP-6.5.5',sheets:{}};
+  const concurrency=Math.min(3,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
 
@@ -2109,6 +2119,48 @@ async function refreshOptionalGoogleBatches(optionalBatches, completed, failures
   await Promise.all(
     Array.from({length:concurrency},()=>worker())
   );
+
+  /*
+   * Final recovery pass:
+   * optional Apps Script requests occasionally time out while the same endpoint
+   * succeeds immediately afterwards. Retry failed scopes sequentially with a
+   * longer timeout before displaying a warning to stakeholders.
+   */
+  if(failures.length){
+    const pending=failures.slice();
+    failures.length=0;
+    for(const failure of pending){
+      const batch=optionalBatches.find(x=>x.scope===failure.scope);
+      if(!batch){failures.push(failure);continue;}
+      setGoogleProgressCurrent('Final retry: '+batch.label+'…');
+      try{
+        const payload=await loadGoogleBatchWithRetry(batch,{
+          attempts:2,
+          timeoutMs:150000,
+          retryTimeoutMs:210000,
+          retryDelayMs:4000
+        });
+        mergeGoogleSheetPayload(workingPayload,payload);
+        if(!completed.includes(batch.scope))completed.push(batch.scope);
+        applyGoogleWorkingPayload(
+          workingPayload,
+          completed,
+          failures,
+          'optional-final-recovery'
+        );
+        workingPayload.sheets={};
+        console.info('[GOOGLE_SHEET_OPTIONAL_SCOPE_RECOVERED]',batch.scope);
+      }catch(error){
+        failures.push({
+          scope:batch.scope,
+          label:batch.label,
+          required:false,
+          message:error&&error.message?error.message:String(error)
+        });
+        console.warn('[GOOGLE_SHEET_OPTIONAL_SCOPE_EXHAUSTED]',batch.scope,error);
+      }
+    }
+  }
 
   const stamp=new Date().toLocaleString();
   localStorage.setItem('cf_google_last_refresh',stamp);
@@ -2196,7 +2248,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.5.4',sheets:{}};
+    const corePayload={version:'FIP-6.5.5',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
