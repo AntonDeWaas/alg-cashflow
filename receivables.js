@@ -32,8 +32,8 @@ const MOVEMENT_CONFIG={
 };
 
 const S={payload:null,entity:'GROUP',section:'overview',parsed:{},updated:null,wrapped:false,
-  agingFilter:{from:0,to:13,min:0,search:''},
-  movementFilter:{from:6,to:13,min:0,search:''},
+  agingFilter:{from:0,to:13,min:0,division:'ALL',customer:'ALL'},
+  movementFilter:{from:6,to:13,min:0,division:'ALL',customer:'ALL'},
   customerFilter:{entity:'ALL',division:'ALL',customer:'',minimum:0},
   collection:{year:null,month:null,country:'GROUP',entity:'GROUP',division:'ALL',coreOnly:false}};
 const $=id=>document.getElementById(id),clean=v=>String(v==null?'':v).replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
@@ -55,25 +55,38 @@ const BK_LABELS=['0–30','31–60','61–90','91–120','121–150','151–180'
 function agingRangeAmount(row,from,to,factor){
   return BK.slice(from,to+1).reduce((a,k)=>a+(Number(row.buckets&&row.buckets[k])||0),0)*(factor||1);
 }
+function agingFilterOptions(){
+  const rs=rows();
+  const divisions=[...new Set(rs.map(r=>r.division||'Unassigned'))].sort();
+  const customers=[...new Set(rs.map(r=>r.customer).filter(Boolean))].sort();
+  return {divisions,customers};
+}
 function agingFilterControls(kind){
   const f=kind==='movement'?S.movementFilter:S.agingFilter;
-  const prefix=kind==='movement'?'mov':'age';
+  const opts=agingFilterOptions();
   return `<div class="recv-aging-filter-block"><div class="recv-aging-filters" data-aging-kind="${kind}">
     <label>Age From<select data-aging-field="from">${BK_LABELS.map((x,i)=>`<option value="${i}" ${i===f.from?'selected':''}>${x}</option>`).join('')}</select></label>
     <label>Age To<select data-aging-field="to">${BK_LABELS.map((x,i)=>`<option value="${i}" ${i===f.to?'selected':''}>${x}</option>`).join('')}</select></label>
     <label>Minimum Outstanding<input data-aging-field="min" type="number" min="0" step="1000" value="${Number(f.min)||0}"></label>
-    <label class="recv-aging-search">Customer / division<input data-aging-field="search" type="search" value="${esc(f.search||'')}" placeholder="Search…"></label>
+    <label>Division<select data-aging-field="division">
+      <option value="ALL">All divisions</option>
+      ${opts.divisions.map(x=>`<option value="${esc(x)}" ${f.division===x?'selected':''}>${esc(x)}</option>`).join('')}
+    </select></label>
+    <label class="recv-aging-customer">Customer<select data-aging-field="customer">
+      <option value="ALL">All customers</option>
+      ${opts.customers.map(x=>`<option value="${esc(x)}" ${f.customer===x?'selected':''}>${esc(x)}</option>`).join('')}
+    </select></label>
     <button type="button" data-aging-reset>Reset</button>
-  </div><div class="recv-aging-filter-note">Select any continuous aging range, for example 0–30 to 61–90 or 181–210 to &gt;731.</div></div>`;
+  </div><div class="recv-aging-filter-note">Select an aging range, division and customer. Minimum Outstanding applies to the selected aging range.</div></div>`;
 }
 function bindAgingFilterControls(){
   document.querySelectorAll('.recv-aging-filters').forEach(root=>{
     const kind=root.dataset.agingKind;
     const target=kind==='movement'?S.movementFilter:S.agingFilter;
     root.querySelectorAll('[data-aging-field]').forEach(control=>{
-      control.onchange=control.oninput=()=>{
+      control.onchange=()=>{
         const field=control.dataset.agingField;
-        target[field]=(field==='search')?clean(control.value):Number(control.value)||0;
+        target[field]=(field==='division'||field==='customer')?control.value:Number(control.value)||0;
         if(target.from>target.to){
           if(field==='from')target.to=target.from;else target.from=target.to;
         }
@@ -82,8 +95,8 @@ function bindAgingFilterControls(){
     });
     const reset=root.querySelector('[data-aging-reset]');
     if(reset)reset.onclick=()=>{
-      if(kind==='movement')S.movementFilter={from:6,to:13,min:0,search:''};
-      else S.agingFilter={from:0,to:13,min:0,search:''};
+      if(kind==='movement')S.movementFilter={from:6,to:13,min:0,division:'ALL',customer:'ALL'};
+      else S.agingFilter={from:0,to:13,min:0,division:'ALL',customer:'ALL'};
       content();
     };
   });
@@ -318,11 +331,12 @@ function entityDivisionSummary(rs){
     const key=[entity,division,divCode].join('|');
 
     if(!grouped[key])grouped[key]={
-      entity,division,divCode,total:0,under90:0,over90:0,over1yr:0,over2yr:0
+      entity,division,divCode,total:0,under90:0,over60:0,over90:0,over1yr:0,over2yr:0
     };
 
     const metrics=rowAgingMetrics(r,factor);
     grouped[key].total+=metrics.total;
+    grouped[key].over60+=metrics.over60;
     grouped[key].over90+=metrics.over90;
     grouped[key].under90+=metrics.under90;
     grouped[key].over1yr+=metrics.over1yr;
@@ -337,9 +351,9 @@ function entityDivisionSummary(rs){
   detail.forEach(x=>{
     if(!totals[x.entity])totals[x.entity]={
       entity:x.entity,division:'Total Receivable',divCode:'',
-      total:0,under90:0,over90:0,over1yr:0,over2yr:0
+      total:0,under90:0,over60:0,over90:0,over1yr:0,over2yr:0
     };
-    ['total','under90','over90','over1yr','over2yr'].forEach(k=>totals[x.entity][k]+=x[k]);
+    ['total','under90','over60','over90','over1yr','over2yr'].forEach(k=>totals[x.entity][k]+=x[k]);
   });
 
   const rows=[];
@@ -352,13 +366,14 @@ function entityDivisionSummary(rs){
   if(lastEntity)rows.push(totals[lastEntity]);
 
   if(S.entity==='GROUP'){
-    const g={entity:'Group',division:'Group Receivable',divCode:'',total:0,under90:0,over90:0,over1yr:0,over2yr:0};
-    Object.values(totals).forEach(x=>['total','under90','over90','over1yr','over2yr'].forEach(k=>g[k]+=x[k]));
+    const g={entity:'Group',division:'Group Receivable',divCode:'',total:0,under90:0,over60:0,over90:0,over1yr:0,over2yr:0};
+    Object.values(totals).forEach(x=>['total','under90','over60','over90','over1yr','over2yr'].forEach(k=>g[k]+=x[k]));
     rows.push(g);
   }
 
   const body=rows.map(x=>{
     const isTotal=/total receivable|group receivable/i.test(x.division);
+    const p60=x.total?x.over60/x.total*100:0;
     const p90=x.total?x.over90/x.total*100:0;
     const p1=x.total?x.over1yr/x.total*100:0;
     const p2=x.total?x.over2yr/x.total*100:0;
@@ -368,6 +383,8 @@ function entityDivisionSummary(rs){
       <td>${esc(x.divCode)}</td>
       <td class="num">${fmt(x.total)}</td>
       <td class="num">${fmt(x.under90)}</td>
+      <td class="num">${fmt(x.over60)}</td>
+      <td class="num recv-pct-cell">${pct(p60)}</td>
       <td class="num">${fmt(x.over90)}</td>
       <td class="num recv-pct-cell">${pct(p90)}</td>
       <td class="num">${fmt(x.over1yr)}</td>
@@ -385,7 +402,9 @@ function entityDivisionSummary(rs){
     <div class="recv-table-wrap"><table class="recv-table recv-summary-table">
       <thead><tr>
         <th>Entity</th><th>Division</th><th>DIV</th><th>Total</th>
-        <th>&lt;90 Days</th><th>&gt;90 Days</th><th class="recv-pct-head">&gt;90 %</th>
+        <th>&lt;90 Days</th>
+        <th>&gt;60 Days</th><th class="recv-pct-head">&gt;60 %</th>
+        <th>&gt;90 Days</th><th class="recv-pct-head">&gt;90 %</th>
         <th>&gt;1 Year</th><th class="recv-pct-head">&gt;1 Year %</th>
         <th>&gt;2 Years</th><th class="recv-pct-head">&gt;2 Years %</th>
       </tr></thead>
@@ -946,8 +965,8 @@ function agingMovementRecords(){
     });
 
     Object.values(map).forEach(r=>{
-      const q=clean(filter.search).toLowerCase();
-      if(q && !(clean(r.customer)+' '+clean(r.division)+' '+clean(r.entity)).toLowerCase().includes(q))return;
+      if(filter.division!=='ALL'&&clean(r.division)!==clean(filter.division))return;
+      if(filter.customer!=='ALL'&&clean(r.customer)!==clean(filter.customer))return;
       if(Math.max(Math.abs(r.previous),Math.abs(r.current))<(Number(filter.min)||0))return;
       if(r.previous===0&&r.current===0)return;
       r.movement=r.current-r.previous;
@@ -1018,7 +1037,6 @@ function renderAgingDetail(rs){
   const ccy=currency(),f=S.agingFilter;
   const selectedKeys=BK.slice(f.from,f.to+1);
   const selectedLabels=BK_LABELS.slice(f.from,f.to+1);
-  const q=clean(f.search).toLowerCase();
   const filtered=rs.map(r=>{
     const factor=S.entity==='GROUP'?r.fx:1;
     const range=agingRangeAmount(r,f.from,f.to,factor);
@@ -1026,7 +1044,8 @@ function renderAgingDetail(rs){
     return {r,factor,range,total};
   }).filter(x=>{
     if(x.range<(Number(f.min)||0))return false;
-    if(q && !(clean(x.r.customer)+' '+clean(x.r.division)+' '+clean(x.r.entityLabel||x.r.entityId)).toLowerCase().includes(q))return false;
+    if(f.division!=='ALL'&&clean(x.r.division)!==clean(f.division))return false;
+    if(f.customer!=='ALL'&&clean(x.r.customer)!==clean(f.customer))return false;
     return x.range!==0 || Number(f.min)===0;
   }).sort((a,b)=>b.range-a.range);
 
@@ -1312,6 +1331,55 @@ function collectionGroupRows(rows,field){
     return g;
   });
 }
+
+function collectionEntityCategoryRows(rows){
+  const y=Number(S.collection.year),m=Number(S.collection.month),groups={};
+  const monthKey=y+'-'+String(m).padStart(2,'0');
+  rows.forEach(r=>{
+    const entity=clean(r.entity)||'Unassigned';
+    const category=clean(r.profitCentre)||clean(r.division)||'Unassigned';
+    const key=entity+'|'+category;
+    if(!groups[key])groups[key]={entity,category,label:category,invoiced:0,collected:0,target:0,debt:0};
+    const g=groups[key],v=r.values[monthKey]||0;
+    if(r.description==='INVOICED')g.invoiced+=v;
+    else if(r.description==='COLLECTED')g.collected+=v;
+    else if(r.description==='TARGET')g.target+=v;
+    else if(r.description==='DEBT')g.debt+=v;
+  });
+  return Object.values(groups).map(g=>{
+    g.variance=g.collected-g.target;
+    g.achievement=g.target?g.collected/g.target*100:0;
+    return g;
+  });
+}
+function collectionEntityCategoryTable(items){
+  const body=items.sort((a,b)=>a.entity.localeCompare(b.entity)||b.target-a.target).map(g=>`<tr>
+    <td>${esc(g.entity)}</td><td>${esc(g.category)}</td>
+    <td class="num">${fmt(g.target)}</td><td class="num">${fmt(g.collected)}</td>
+    <td class="num ${g.variance>=0?'recv-good':'recv-bad'}">${fmt(g.variance)}</td>
+    <td class="num ${collectionAchievementClass(g.achievement)}">${pct(g.achievement)}</td>
+    <td class="num">${fmt(g.invoiced)}</td><td class="num">${fmt(g.debt)}</td>
+  </tr>`).join('');
+  const total=items.reduce((a,g)=>({
+    target:a.target+g.target,collected:a.collected+g.collected,
+    variance:a.variance+g.variance,invoiced:a.invoiced+g.invoiced,debt:a.debt+g.debt
+  }),{target:0,collected:0,variance:0,invoiced:0,debt:0});
+  const ach=total.target?total.collected/total.target*100:0;
+  return `<div class="card panel recv-panel">
+    <div class="panelhead"><div><h3>Selected Month by Entity &amp; Category</h3>
+      <p class="hint">Use the Entity and Division filters above to isolate performance · AED '000</p></div></div>
+    <div class="recv-table-wrap"><table class="recv-table coll-detail-table">
+      <thead><tr><th>Entity</th><th>Category</th><th>Target</th><th>Collection</th>
+      <th>Short / Excess</th><th>Achievement</th><th>Invoiced</th><th>Debt</th></tr></thead>
+      <tbody>${body}
+        <tr class="recv-summary-total"><td>Group Total</td><td></td>
+        <td class="num">${fmt(total.target)}</td><td class="num">${fmt(total.collected)}</td>
+        <td class="num ${total.variance>=0?'recv-good':'recv-bad'}">${fmt(total.variance)}</td>
+        <td class="num">${pct(ach)}</td><td class="num">${fmt(total.invoiced)}</td>
+        <td class="num">${fmt(total.debt)}</td></tr>
+      </tbody></table></div>
+  </div>`;
+}
 function collectionDetailTable(title,items){
   const body=items.sort((a,b)=>b.target-a.target).map(g=>`<tr>
     <td>${esc(g.label)}</td>
@@ -1344,7 +1412,9 @@ function collectionSelectedMonthDetail(rows){
   const byProfit=collectionGroupRows(rows,'profitCentre');
   const byDivision=collectionGroupRows(rows,'division');
   const byCountry=collectionGroupRows(rows,'country');
-  return `<div class="recv-two">
+  const byEntityCategory=collectionEntityCategoryRows(rows);
+  return `${collectionEntityCategoryTable(byEntityCategory)}
+  <div class="recv-two">
     ${collectionDetailTable('Selected Month by Profit Centre',byProfit)}
     ${collectionDetailTable('Selected Month by Division',byDivision)}
   </div>${collectionDetailTable('Selected Month by Country',byCountry)}`;
@@ -1403,7 +1473,8 @@ function styles(){if($('receivablesModuleStyles'))return;const s=document.create
 #view-receivables .recv-aging-filter-block{margin:10px 0}#view-receivables .recv-aging-filters{display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin:12px 0;padding:10px 12px;background:#f6f3ed;border:1px solid #ded7cc;border-radius:10px}
 #view-receivables .recv-aging-filters label{display:flex;flex-direction:column;gap:4px;font-size:.72rem;font-weight:800;color:#53606c;text-transform:uppercase;letter-spacing:.04em}
 #view-receivables .recv-aging-filters select,#view-receivables .recv-aging-filters input{min-width:120px;border:1px solid #cfc7bb;border-radius:7px;padding:7px 8px;background:#fff;font:inherit}
-#view-receivables .recv-aging-filters .recv-aging-search{flex:1;min-width:210px}
+#view-receivables .recv-aging-filters .recv-aging-customer{flex:1;min-width:260px}
+#view-receivables .recv-aging-filters .recv-aging-customer select{width:100%;max-width:560px}
 #view-receivables .recv-aging-filter-note{margin-top:5px;font-size:.74rem;color:#68737e}#view-receivables .recv-aging-filters button{border:1px solid #cfc7bb;background:#fff;border-radius:7px;padding:8px 12px;font-weight:800;cursor:pointer}
 #view-receivables .recv-landscape-scroll{max-height:650px;overflow:auto;scrollbar-gutter:stable both-edges}
 #view-receivables .recv-aging-detail-table thead th{position:sticky;top:0;z-index:20}
