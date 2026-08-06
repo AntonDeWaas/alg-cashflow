@@ -1167,7 +1167,9 @@ function ensureCollectionSelection(data){
   if(!s.year||!f.years.includes(Number(s.year)))s.year=Math.max(...f.years);
   const months=f.years.includes(Number(s.year))?
     data.months.filter(x=>x.year===Number(s.year)).map(x=>x.month):[];
-  if(!s.month||!months.includes(Number(s.month)))s.month=Math.max(...months);
+  if(s.month===null||s.month===undefined||(!months.includes(Number(s.month))&&Number(s.month)!==0)){
+    s.month=Math.max(...months);
+  }
   if(!s.country)s.country='GROUP';
   if(!s.entity)s.entity='GROUP';
   if(!s.division)s.division='ALL';
@@ -1186,18 +1188,48 @@ function collectionRowIncluded(r){
 function collectionRows(data){
   return data.rows.filter(collectionRowIncluded);
 }
+function collectionYearMonths(rows,year){
+  const found=new Set();
+  rows.forEach(r=>Object.keys(r.values||{}).forEach(key=>{
+    const match=key.match(/^(\d{4})-(\d{2})$/);
+    if(match&&Number(match[1])===Number(year))found.add(Number(match[2]));
+  }));
+  return [...found].sort((a,b)=>a-b);
+}
 function collectionMetric(rows,year,month,description){
-  const key=year+'-'+String(month).padStart(2,'0');
-  return rows.filter(r=>r.description===description).reduce((a,r)=>a+(r.values[key]||0),0);
+  const selected=rows.filter(r=>r.description===description);
+  if(Number(month)!==0){
+    const key=year+'-'+String(month).padStart(2,'0');
+    return selected.reduce((a,r)=>a+(Number(r.values[key])||0),0);
+  }
+
+  const months=collectionYearMonths(rows,year);
+  if(description==='DEBT'){
+    const latest=months[months.length-1];
+    if(!latest)return 0;
+    const key=year+'-'+String(latest).padStart(2,'0');
+    return selected.reduce((a,r)=>a+(Number(r.values[key])||0),0);
+  }
+
+  return months.reduce((total,m)=>{
+    const key=year+'-'+String(m).padStart(2,'0');
+    return total+selected.reduce((a,r)=>a+(Number(r.values[key])||0),0);
+  },0);
 }
 function collectionYTD(rows,year,throughMonth,description){
+  if(Number(throughMonth)===0)return collectionMetric(rows,year,0,description);
   let total=0;
   for(let m=1;m<=throughMonth;m++)total+=collectionMetric(rows,year,m,description);
   return total;
 }
 function collectionMonthName(month){
+  if(Number(month)===0)return'All Months';
   return new Date(2020,month-1,1).toLocaleString('en-US',{month:'short'});
 }
+function collectionPeriodLabel(year,month){
+  return Number(month)===0?String(year)+' Full Year':collectionMonthName(month)+' '+year;
+}
+
 function collectionAchievementClass(value){
   if(!Number.isFinite(value))return'';
   return value>=100?'pos':value>=90?'':'neg';
@@ -1212,7 +1244,10 @@ function collectionFilters(data){
   return `<div class="card panel recv-panel coll-filter-panel">
     <div class="coll-filter-grid">
       <label>Year<select id="collYear">${f.years.map(y=>`<option value="${y}" ${Number(s.year)===y?'selected':''}>${y}</option>`).join('')}</select></label>
-      <label>Month<select id="collMonth">${monthOptions.map(x=>`<option value="${x.month}" ${Number(s.month)===x.month?'selected':''}>${collectionMonthName(x.month)}</option>`).join('')}</select></label>
+      <label>Month<select id="collMonth">
+        <option value="0" ${Number(s.month)===0?'selected':''}>All</option>
+        ${monthOptions.map(x=>`<option value="${x.month}" ${Number(s.month)===x.month?'selected':''}>${collectionMonthName(x.month)}</option>`).join('')}
+      </select></label>
       <label>Country<select id="collCountry">${countryOptions.map(x=>`<option value="${esc(x)}" ${s.country===x?'selected':''}>${x==='GROUP'?'Group':esc(x)}</option>`).join('')}</select></label>
       <label>Entity<select id="collEntity">${entityOptions.map(x=>`<option value="${esc(x)}" ${s.entity===x?'selected':''}>${x==='GROUP'?'All Entities':esc(x)}</option>`).join('')}</select></label>
       <label>Division<select id="collDivision">${divisionOptions.map(x=>`<option value="${esc(x)}" ${s.division===x?'selected':''}>${x==='ALL'?'All Divisions':esc(x)}</option>`).join('')}</select></label>
@@ -1242,14 +1277,14 @@ function collectionKPIs(rows){
     yoy=priorCollected?(collected-priorCollected)/priorCollected*100:0;
 
   return `<div class="grid kpis recv-kpis coll-kpis">
-    ${kpi('Invoiced',"AED '000 "+fmt(invoiced),collectionMonthName(m)+' '+y)}
-    ${kpi('Cash Collected',"AED '000 "+fmt(collected),collectionMonthName(m)+' '+y)}
-    ${kpi('Target',"AED '000 "+fmt(target),'Monthly collection target')}
+    ${kpi('Invoiced',fmt(invoiced),collectionPeriodLabel(y,m))}
+    ${kpi('Cash Collected',fmt(collected),collectionPeriodLabel(y,m))}
+    ${kpi('Target',fmt(target),Number(m)===0?'Full-year collection target':'Monthly collection target')}
     ${kpi('Achievement',pct(achievement),'Collected ÷ Target',collectionAchievementClass(achievement))}
     ${kpi('Collection Ratio',pct(ratio),'Collected ÷ Invoiced',ratio>=100?'pos':'')}
-    ${kpi('Debt Balance',"AED '000 "+fmt(debt),'Month-end outstanding')}
-    ${kpi('Target Variance',"AED '000 "+fmt(variance),variance>=0?'Above target':'Below target',variance>=0?'pos':'neg')}
-    ${kpi('YoY Collection Growth',pct(yoy),collectionMonthName(m)+' '+py+' comparison',yoy>=0?'pos':'neg')}
+    ${kpi('Debt Balance',fmt(debt),Number(m)===0?'Latest available month-end balance':'Month-end outstanding')}
+    ${kpi('Target Variance',fmt(variance),variance>=0?'Above target':'Below target',variance>=0?'pos':'neg')}
+    ${kpi('YoY Collection Growth',pct(yoy),collectionPeriodLabel(py,m)+' comparison',yoy>=0?'pos':'neg')}
   </div>`;
 }
 function collectionExecutive(rows){
@@ -1266,11 +1301,12 @@ function collectionExecutive(rows){
     ytdAchievement=ytdTarget?ytdCollected/ytdTarget*100:0,
     ytdRatio=ytdInvoiced?ytdCollected/ytdInvoiced*100:0;
 
+  const period=collectionPeriodLabel(y,m),priorPeriod=collectionPeriodLabel(py,m);
   return `<div class="card panel recv-panel coll-exec">
-    <div class="panelhead"><div><h3>Executive Summary</h3><p class="hint">Collection performance · all figures in AED '000</p></div></div>
-    <p>Collections for <strong>${collectionMonthName(m)} ${y}</strong> were <strong>AED '000 ${fmt(collected)}</strong> against a target of <strong>AED '000 ${fmt(target)}</strong>, achieving <strong>${pct(achievement)}</strong>. The result was <strong>AED '000 ${fmt(Math.abs(targetVariance))}</strong> ${targetVariance>=0?'above':'below'} target.</p>
-    <p>Monthly collections were ${yoy>=0?'higher':'lower'} than ${collectionMonthName(m)} ${py} by <strong>${pct(Math.abs(yoy))}</strong>. Year-to-date collections reached <strong>AED '000 ${fmt(ytdCollected)}</strong>, achieving <strong>${pct(ytdAchievement)}</strong> of YTD target and ${ytdYoy>=0?'increasing':'decreasing'} by <strong>${pct(Math.abs(ytdYoy))}</strong> compared with the same period last year.</p>
-    <p>Current-month invoicing was <strong>AED '000 ${fmt(invoiced)}</strong>, the month-end debt balance was <strong>AED '000 ${fmt(debt)}</strong>, and YTD collections represented <strong>${pct(ytdRatio)}</strong> of YTD invoicing.</p>
+    <div class="panelhead"><div><h3>Executive Summary</h3><p class="hint">Collection performance</p></div></div>
+    <p>Collections for <strong>${period}</strong> were <strong>${fmt(collected)}</strong> against a target of <strong>${fmt(target)}</strong>, achieving <strong>${pct(achievement)}</strong>. The result was <strong>${fmt(Math.abs(targetVariance))}</strong> ${targetVariance>=0?'above':'below'} target.</p>
+    <p>Collections were ${yoy>=0?'higher':'lower'} than ${priorPeriod} by <strong>${pct(Math.abs(yoy))}</strong>. Period collections reached <strong>${fmt(ytdCollected)}</strong>, achieving <strong>${pct(ytdAchievement)}</strong> of target and ${ytdYoy>=0?'increasing':'decreasing'} by <strong>${pct(Math.abs(ytdYoy))}</strong> compared with the equivalent prior-year period.</p>
+    <p>Invoicing was <strong>${fmt(invoiced)}</strong>, the latest relevant debt balance was <strong>${fmt(debt)}</strong>, and collections represented <strong>${pct(ytdRatio)}</strong> of invoicing.</p>
   </div>`;
 }
 function collectionTrend(rows){
@@ -1286,8 +1322,8 @@ function collectionTrend(rows){
   }
   const max=Math.max(1,...months.flatMap(x=>[x.invoiced,x.collected,x.target]));
   return `<div class="card panel recv-panel">
-    <div class="panelhead"><div><h3>${y} Monthly Trend</h3><p class="hint">Invoiced, cash collected and target · AED '000</p></div></div>
-    <div class="coll-trend">${months.map(x=>`<div class="coll-month ${x.label===collectionMonthName(through)?'active':''}">
+    <div class="panelhead"><div><h3>${y} Monthly Trend</h3><p class="hint">Invoiced, cash collected and target</p></div></div>
+    <div class="coll-trend">${months.map(x=>`<div class="coll-month ${Number(through)!==0&&x.label===collectionMonthName(through)?'active':''}">
       <div class="coll-month-bars">
         <i class="invoice" title="Invoiced ${fmt(x.invoiced)}" style="height:${Math.max(2,x.invoiced/max*100)}%"></i>
         <i class="collect" title="Collected ${fmt(x.collected)}" style="height:${Math.max(2,x.collected/max*100)}%"></i>
@@ -1300,8 +1336,9 @@ function collectionTrend(rows){
 function collectionComparisonTable(rows,mode){
   const y=Number(S.collection.year),m=Number(S.collection.month),py=y-1;
   const isYTD=mode==='ytd';
-  const current=(desc)=>isYTD?collectionYTD(rows,y,m,desc):collectionMetric(rows,y,m,desc);
-  const previous=(desc)=>isYTD?collectionYTD(rows,py,m,desc):collectionMetric(rows,py,m,desc);
+  const allMonths=Number(m)===0;
+  const current=(desc)=>(isYTD||allMonths)?collectionYTD(rows,y,m,desc):collectionMetric(rows,y,m,desc);
+  const previous=(desc)=>(isYTD||allMonths)?collectionYTD(rows,py,m,desc):collectionMetric(rows,py,m,desc);
   const curr={invoiced:current('INVOICED'),collected:current('COLLECTED'),target:current('TARGET'),debt:collectionMetric(rows,y,m,'DEBT')};
   const prev={invoiced:previous('INVOICED'),collected:previous('COLLECTED'),target:previous('TARGET'),debt:collectionMetric(rows,py,m,'DEBT')};
   curr.achievement=curr.target?curr.collected/curr.target*100:0;
@@ -1316,7 +1353,7 @@ function collectionComparisonTable(rows,mode){
   ];
   return `<div class="card panel recv-panel">
     <div class="panelhead"><div><h3>${isYTD?'YTD Comparison':'Monthly Comparison'}</h3>
-      <p class="hint">${isYTD?'Jan–'+collectionMonthName(m):collectionMonthName(m)} ${y} vs ${py}</p></div></div>
+      <p class="hint">${allMonths?'Full Year':(isYTD?'Jan–'+collectionMonthName(m):collectionMonthName(m))} ${y} vs ${py}</p></div></div>
     <table class="recv-table coll-compare"><thead><tr><th>KPI</th><th>${py}</th><th>${y}</th><th>Change</th><th>%</th></tr></thead>
     <tbody>${lines.map(([label,p,c,isPct])=>{
       const change=c-p,pchange=p?(c-p)/p*100:0;
@@ -1333,8 +1370,7 @@ function collectionGroupRows(rows,field){
     const key=clean(r[field])||'Unassigned';
     if(!groups[key])groups[key]={label:key,invoiced:0,collected:0,target:0,debt:0};
     const g=groups[key];
-    const monthKey=y+'-'+String(m).padStart(2,'0');
-    const v=r.values[monthKey]||0;
+    const v=collectionMetric([r],y,m,r.description);
     if(r.description==='INVOICED')g.invoiced+=v;
     else if(r.description==='COLLECTED')g.collected+=v;
     else if(r.description==='TARGET')g.target+=v;
@@ -1349,13 +1385,12 @@ function collectionGroupRows(rows,field){
 
 function collectionEntityCategoryRows(rows){
   const y=Number(S.collection.year),m=Number(S.collection.month),groups={};
-  const monthKey=y+'-'+String(m).padStart(2,'0');
   rows.forEach(r=>{
     const entity=clean(r.entity)||'Unassigned';
     const category=clean(r.profitCentre)||clean(r.division)||'Unassigned';
     const key=entity+'|'+category;
     if(!groups[key])groups[key]={entity,category,label:category,invoiced:0,collected:0,target:0,debt:0};
-    const g=groups[key],v=r.values[monthKey]||0;
+    const g=groups[key],v=collectionMetric([r],y,m,r.description);
     if(r.description==='INVOICED')g.invoiced+=v;
     else if(r.description==='COLLECTED')g.collected+=v;
     else if(r.description==='TARGET')g.target+=v;
@@ -1382,7 +1417,7 @@ function collectionEntityCategoryTable(items){
   const ach=total.target?total.collected/total.target*100:0;
   return `<div class="card panel recv-panel">
     <div class="panelhead"><div><h3>Selected Month by Entity &amp; Category</h3>
-      <p class="hint">Use the Entity and Division filters above to isolate performance · AED '000</p></div></div>
+      <p class="hint">Use the Entity and Division filters above to isolate performance</p></div></div>
     <div class="recv-table-wrap"><table class="recv-table coll-detail-table">
       <thead><tr><th>Entity</th><th>Category</th><th>Target</th><th>Collection</th>
       <th>Short / Excess</th><th>Achievement</th><th>Invoiced</th><th>Debt</th></tr></thead>
@@ -1412,7 +1447,7 @@ function collectionDetailTable(title,items){
   const ach=total.target?total.collected/total.target*100:0;
   return `<div class="card panel recv-panel">
     <div class="panelhead"><div><h3>${esc(title)}</h3>
-      <p class="hint">Selected month · AED '000</p></div></div>
+      <p class="hint">Selected month</p></div></div>
     <div class="recv-table-wrap"><table class="recv-table coll-detail-table">
       <thead><tr><th>Category</th><th>Target</th><th>Collection</th><th>Short / Excess</th><th>Achievement</th><th>Invoiced</th><th>Debt</th></tr></thead>
       <tbody>${body}
@@ -1439,7 +1474,8 @@ function renderCollectionsPerformance(){
   if(data.error)return`<div class="card panel recv-panel"><div class="empty">Collection Performance requires the <strong>Coll vs Target</strong> sheet. ${esc(data.error)}.</div></div>`;
   ensureCollectionSelection(data);
   const rows=collectionRows(data);
-  const html=collectionFilters(data)+collectionKPIs(rows)+collectionExecutive(rows)+collectionSelectedMonthDetail(rows)+collectionTrend(rows)+
+  const unitNote='<div class="recv-unit-note">All financial figures in AED \'000 unless stated otherwise.</div>';
+  const html=collectionFilters(data)+unitNote+collectionKPIs(rows)+collectionExecutive(rows)+collectionSelectedMonthDetail(rows)+collectionTrend(rows)+
     `<div class="recv-two">${collectionComparisonTable(rows,'month')}${collectionComparisonTable(rows,'ytd')}</div>`;
   setTimeout(bindCollectionFilters,0);
   return html;
@@ -1457,6 +1493,10 @@ catch(err){
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
 
+#view-receivables .recv-unit-note{
+  margin:10px 0 2px;padding:7px 10px;border-left:4px solid #0b3767;
+  background:#eef4fa;color:#29435d;font-size:.78rem;font-weight:700
+}
 #view-receivables .recv-aging-distribution-total{
   display:flex;justify-content:space-between;align-items:center;
   margin-top:10px;padding:10px 12px;border-top:2px solid #173f6d;

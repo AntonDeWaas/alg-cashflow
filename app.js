@@ -47,8 +47,8 @@ let D=freshData();
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-window.FIP_APP_RUNTIME_VERSION='6.5.8';
-document.documentElement.setAttribute('data-fip-app-version','6.5.8');
+window.FIP_APP_RUNTIME_VERSION='6.5.9';
+document.documentElement.setAttribute('data-fip-app-version','6.5.9');
 
 function fmt(n){
   if(n===0||n===undefined||n===null||isNaN(n)) return '—';
@@ -299,11 +299,53 @@ function syncForecastSelectors(){
   ['forecastEntity','forecastEntity2'].forEach(id=>{ if($(id)) $(id).innerHTML=opts; });
 }
 function setForecastSheet(v){ currentForecastSheet=v; syncForecastSelectors(); renderAlpsCB(); }
+
+function normalizedForecastSummary(d){
+  const source=Array.isArray(d&&d.monthlySummary)?d.monthlySummary:[];
+  const months=source.filter(x=>x.month!=='Year Total').map(x=>({...x}));
+  let fallbackOpening=0;
+
+  try{
+    const sourceValues=cashPositionValues('opening');
+    const live=Number(sourceValues&&sourceValues[0]);
+    if(Number.isFinite(live)&&live!==0)fallbackOpening=live;
+  }catch(_){}
+
+  if(!fallbackOpening){
+    const raw=(liquidityGroupSource&&liquidityGroupSource())||{};
+    const row=(raw.rows||[]).find(r=>
+      /Estimated Cash\s*(Balance|Bal).*(Beginning|Beginning Of The Period)|Opening Balance|Est\.\s*Cash Balance\s*-\s*Beginning/i
+        .test(cleanText(r.label||''))
+    );
+    const first=Number(row&&row.values&&row.values[0]);
+    if(Number.isFinite(first))fallbackOpening=first;
+  }
+
+  months.forEach((m,i)=>{
+    const current=Number(m.opening);
+    if(!Number.isFinite(current)||current===0){
+      if(i===0)m.opening=fallbackOpening||0;
+      else m.opening=Number(months[i-1].closing)||0;
+    }
+  });
+
+  const existingYear=source.find(x=>x.month==='Year Total')||{};
+  const year={
+    ...existingYear,
+    month:'Year Total',
+    opening:Number(months[0]&&months[0].opening)||fallbackOpening||0,
+    inflows:Number(existingYear.inflows)||months.reduce((a,x)=>a+(Number(x.inflows)||0),0),
+    outflows:Number(existingYear.outflows)||months.reduce((a,x)=>a+(Number(x.outflows)||0),0),
+    closing:Number(existingYear.closing)||Number(months[months.length-1]&&months[months.length-1].closing)||0
+  };
+  return [...months,year];
+}
 function renderAlpsCB(){
   if(!$('alpsKpis')) return;
   syncForecastSelectors();
-  const d=getForecast(), months=d.monthlySummary.filter(x=>x.month!=='Year Total');
-  const year=d.monthlySummary.find(x=>x.month==='Year Total')||months[months.length-1];
+  const d=getForecast(), normalized=normalizedForecastSummary(d),
+    months=normalized.filter(x=>x.month!=='Year Total');
+  const year=normalized.find(x=>x.month==='Year Total')||months[months.length-1];
   const last=months[months.length-1]||year;
   $('alpsSub').textContent=`${d.name} · ${d.title} · ${d.unit}`;
   $('alpsKpis').innerHTML=[
@@ -312,7 +354,7 @@ function renderAlpsCB(){
     ['Year outflows', alpsFmt(year?.outflows), 'Total forecast payments', 'neg'],
     ['Closing balance', alpsFmt(last?.closing), 'End of selected forecast period', alpsValClass(last?.closing)]
   ].map(k=>`<div class="card kpi"><div class="lbl">${k[0]}</div><div class="val num ${k[3]}">${k[1]}</div><div class="meta">${k[2]}</div></div>`).join('');
-  $('alpsMonthly').innerHTML=alpsMonthlyTable(d.monthlySummary);
+  $('alpsMonthly').innerHTML=alpsMonthlyTable(normalized);
   renderAlpsSheet();
 }
 function alpsMonthlyTable(rows){
@@ -1656,7 +1698,7 @@ window.getLiquiditySourceDiagnostics=function(){
   const current=getCurrentReportingPeriodInfo();
   const closing=closingRowForGroup(group);
   return {
-    version:'6.5.8',
+    version:'6.5.9',
     reportingDate:rpt?rpt.toISOString().slice(0,10):null,
     currentPeriod:current?{
       index:current.index,
@@ -2103,7 +2145,7 @@ window.getGoogleRefreshProgress=function(){
 };
 
 async function refreshOptionalGoogleBatches(optionalBatches, completed, failures){
-  const workingPayload={version:'FIP-6.5.8',sheets:{}};
+  const workingPayload={version:'FIP-6.5.9',sheets:{}};
   const concurrency=Math.min(3,Math.max(1,optionalBatches.length));
   let nextIndex=0;
   let finishedCount=0;
@@ -2296,7 +2338,7 @@ async function refreshFromGoogleSheet(){
     const completed=[];
     const failures=[];
     const previousPayload=window.GOOGLE_SHEET_RAW_PAYLOAD;
-    const corePayload={version:'FIP-6.5.8',sheets:{}};
+    const corePayload={version:'FIP-6.5.9',sheets:{}};
 
     try{
       setGoogleNotes('Refreshing core dashboard and group forecast…');
