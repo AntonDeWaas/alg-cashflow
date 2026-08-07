@@ -1,7 +1,7 @@
 // FIP 6.5.3 — landscape presentation and reporting-date standard
 (function(global){
 'use strict';
-const VERSION='6.5.9';
+const VERSION='6.6.0';
 const $=s=>document.querySelector(s);
 
 function reportingDate(){
@@ -86,9 +86,9 @@ function apply(){
 }
 
 function styles(){
-  if(document.getElementById('fipPresentation659Styles'))return;
+  if(document.getElementById('fipPresentation660Styles'))return;
   const s=document.createElement('style');
-  s.id='fipPresentation659Styles';
+  s.id='fipPresentation660Styles';
   s.textContent=`
 :root{--fip-page-max:1920px}
 body{overflow-x:hidden}

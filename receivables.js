@@ -35,7 +35,13 @@ const S={payload:null,entity:'GROUP',section:'overview',parsed:{},updated:null,w
   agingFilter:{from:0,to:13,min:0,division:'ALL',customer:'ALL'},
   movementFilter:{from:6,to:13,min:0,division:'ALL',customer:'ALL'},
   customerFilter:{entity:'ALL',division:'ALL',customer:'',minimum:0},
-  collection:{year:null,month:null,country:'GROUP',entity:'GROUP',division:'ALL',coreOnly:false}};
+  collection:{year:null,month:null,country:'GROUP',entity:'GROUP',division:'ALL',coreOnly:false},
+  collectionAging:{
+    entity:'GROUP',profitCentre:'ALL',division:'ALL',relationshipManager:'ALL',
+    collectionManager:'ALL',type:'ALL',customer:'ALL',project:'ALL',
+    invoice:'ALL',receipt:'ALL',period:'YTD',year:null,month:0,from:'',to:'',
+    view:'overview',minimum:0
+  }};
 const $=id=>document.getElementById(id),clean=v=>String(v==null?'':v).replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 const esc=v=>clean(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 function num(v){const s=clean(v);if(!s||s==='-'||s==='—')return 0;const neg=/^\(.*\)$/.test(s),n=Number(s.replace(/[(),]/g,'').replace(/\b(?:AED|SAR|OMR)\b/gi,'').replace(/[^\d.-]/g,''));return Number.isFinite(n)?(neg?-Math.abs(n):n):0}
@@ -214,7 +220,7 @@ function aggregate(rs){
 }
 const currency=()=>S.entity==='GROUP'?'AED':cfg(S.entity).currency;
 function entityTabs(){const root=$('recvEntityTabs');if(!root)return;root.innerHTML=C.entities.map(e=>{const ok=e.id==='GROUP'||(S.parsed[e.id]&&S.parsed[e.id].rows.length);return`<button class="recv-pill ${S.entity===e.id?'active':''}" data-e="${e.id}" ${ok?'':'disabled'}>${esc(e.label)}${e.id==='ALU'?' · SAR':e.id==='ALIS'?' · OMR':''}</button>`}).join('');root.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{S.entity=b.dataset.e;render()})}
-function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Aging Movement by Bracket'],['movement','Movement Analysis'],['collections','Collections Performance']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
+function sectionTabs(){const root=$('recvSectionTabs');if(!root)return;const t=[['overview','Overview'],['aging','Aging Analysis'],['agingDetail','Aging Analysis Detail'],['customers','Top Customers'],['customerMovement','Aging Movement by Bracket'],['movement','Movement Analysis'],['collections','Collections Performance'],['collectionAging','Collection Aging']];root.innerHTML=t.map(x=>`<button class="recv-subtab ${S.section===x[0]?'active':''}" data-s="${x[0]}">${x[1]}</button>`).join('');root.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{S.section=b.dataset.s;sectionTabs();content()})}
 function kpi(l,v,m,c){return`<div class="card kpi recv-kpi"><div class="lbl">${esc(l)}</div><div class="val num ${c||''}">${esc(v)}</div><div class="meta">${esc(m)}</div></div>`}
 function bars(items,ccy){const max=Math.max(1,...items.map(x=>Math.abs(x.value)));return`<div class="recv-bars">${items.map(x=>`<div class="recv-bar-row"><div class="recv-bar-label">${esc(x.label)}</div><div class="recv-bar-track"><div class="recv-bar-fill" style="width:${Math.max(1,Math.abs(x.value)/max*100)}%"></div></div><div class="recv-bar-value">${ccy} ${fmt(x.value)}</div></div>`).join('')}</div>`}
 
@@ -1469,6 +1475,416 @@ function collectionSelectedMonthDetail(rows){
     ${collectionDetailTable('Selected Month by Division',byDivision)}
   </div>${collectionDetailTable('Selected Month by Country',byCountry)}`;
 }
+
+/* ========================= COLLECTION AGING ========================= */
+const CA_ENTITY={
+  ALPS:{label:'ALPS',currency:'AED',fx:1},
+  ALU:{label:'ALU',currency:'SAR',fx:.975},
+  ALIS:{label:'ALIS',currency:'OMR',fx:9.5},
+  ALICLER:{label:'ALICLER',currency:'AED',fx:1},
+  ALPS_UZ:{label:'ALPS UZ',currency:'AED',fx:1},
+  ALPS_RAK:{label:'ALPS RAK',currency:'AED',fx:1}
+};
+const CA_BUCKETS=[
+  {key:'le30',label:'≤30 Days',mid:15},
+  {key:'d30_60',label:'30–60 Days',mid:45},
+  {key:'d60_90',label:'60–90 Days',mid:75},
+  {key:'d90_120',label:'90–120 Days',mid:105},
+  {key:'d120_180',label:'120–180 Days',mid:150},
+  {key:'d180_365',label:'180–365 Days',mid:272.5},
+  {key:'gt365',label:'>365 Days',mid:450}
+];
+function caNorm(v){return clean(v).toLowerCase().replace(/[^a-z0-9><=]/g,'')}
+function caEntityId(value){
+  const s=caNorm(value);
+  if(s.includes('alicler'))return'ALICLER';
+  if(s.includes('alpsuz')||s.includes('uzbek'))return'ALPS_UZ';
+  if(s.includes('alpsrak')||s.includes('rak'))return'ALPS_RAK';
+  if(s==='alu'||s.includes('allaithutilities')||s.includes('ksa'))return'ALU';
+  if(s==='alis'||s.includes('oman'))return'ALIS';
+  if(s.includes('alps')||s.includes('projectservices'))return'ALPS';
+  return clean(value)||'UNKNOWN';
+}
+function caEntityCfg(id){
+  return CA_ENTITY[id]||{label:id||'Unknown',currency:'AED',fx:1};
+}
+function caDate(v){
+  const s=clean(v);
+  if(!s)return null;
+  if(v instanceof Date&&!isNaN(v))return v;
+  let m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){
+    let y=Number(m[3]);if(y<100)y+=2000;
+    const d=new Date(y,Number(m[2])-1,Number(m[1]));
+    if(!isNaN(d))return d;
+  }
+  const d=new Date(s);
+  return isNaN(d)?null:d;
+}
+function caHeaderMap(headers,start,end){
+  const map={};
+  for(let i=start;i<end;i++){
+    const n=caNorm(headers[i]);
+    if(!n)continue;
+    const set=(key,tests)=>{if(map[key]==null&&tests.some(t=>typeof t==='string'?n===t:t.test(n)))map[key]=i};
+    set('relationshipManager',['relationshipmanager',/accountmanager/]);
+    set('collectionManager',['collectionmanagername','collectionmanager',/collectionperson/]);
+    set('type',['type','invoicetype']);
+    set('projectName',['projectname']);
+    set('projectNumber',['projectnumber','projectno','projectcode']);
+    set('profitCentre',['profitcenter','profitcentre']);
+    set('division',['division','dimension']);
+    set('billNo',['billno','invoicenumber','invoiceno']);
+    set('billDate',['billdate','invoicedate']);
+    set('customer',['acname','customername','customer']);
+    set('invoiceAmt',['invoiceamt','invoiceamount']);
+    set('le30',['<=30days','<30days','030days']);
+    set('d30_60',['3060days','30to60days']);
+    set('d60_90',['6090days','60to90days']);
+    set('d90_120',['90120days','90to120days']);
+    set('d120_180',['120180days','120to180days']);
+    set('d180_365',['180365days','180to365days']);
+    set('gt365',['>365days','over365days']);
+    set('totalReceipt',['>totalreceipt','totalreceipt','receiptamount']);
+    set('realizationAmount',['>realizationamount','realizationamount']);
+    set('previousReceipt',['>previousreceipt','>previousreceipt','previousreceipt','previouseReceipt'.toLowerCase()]);
+    set('unsettledAmount',['>unsettledamount','unsettledamount']);
+    set('pdcAmount',['>pdcamount','pdcamount']);
+    set('receiptNo',['>receiptno','receiptno','receiptnumber']);
+    set('receiptDate',['>receiptdate','receiptdate']);
+  }
+  return map;
+}
+function caNearestEntity(row1,start,end){
+  for(let i=start;i<Math.min(end,start+8);i++)if(clean(row1[i]))return caEntityId(row1[i]);
+  for(let i=start;i<end;i++)if(clean(row1[i]))return caEntityId(row1[i]);
+  for(let i=start;i>=0;i--)if(clean(row1[i]))return caEntityId(row1[i]);
+  return'UNKNOWN';
+}
+function parseCollectionAging(){
+  const m=matrix('Coll Aging');
+  if(!m.length)return{rows:[],error:'Google Sheet tab "Coll Aging" has not been loaded.'};
+  if(m.length<3)return{rows:[],error:'Coll Aging requires company codes on row 1, headers on row 2 and data from row 3.'};
+
+  const row1=m[0]||[],headers=m[1]||[],starts=[];
+  headers.forEach((h,i)=>{
+    const n=caNorm(h);
+    if(n==='relationshipmanager'||n==='accountmanager')starts.push(i);
+  });
+  if(!starts.length)starts.push(0);
+
+  const blocks=starts.map((start,i)=>({
+    start,end:i+1<starts.length?starts[i+1]:headers.length,
+    entity:caNearestEntity(row1,start,i+1<starts.length?starts[i+1]:headers.length)
+  }));
+  const out=[];
+
+  blocks.forEach(block=>{
+    const map=caHeaderMap(headers,block.start,block.end);
+    if(map.customer==null&&map.billNo==null&&map.receiptNo==null)return;
+    const ecfg=caEntityCfg(block.entity);
+
+    for(let r=2;r<m.length;r++){
+      const row=m[r]||[];
+      const customer=clean(row[map.customer]),
+        billNo=clean(row[map.billNo]),
+        receiptNo=clean(row[map.receiptNo]),
+        projectName=clean(row[map.projectName]);
+
+      const buckets={};
+      CA_BUCKETS.forEach(b=>buckets[b.key]=map[b.key]==null?0:num(row[map[b.key]]));
+      const totalReceipt=map.totalReceipt==null?CA_BUCKETS.reduce((a,b)=>a+buckets[b.key],0):num(row[map.totalReceipt]);
+      const invoiceAmt=map.invoiceAmt==null?0:num(row[map.invoiceAmt]);
+      const previousReceipt=map.previousReceipt==null?0:num(row[map.previousReceipt]);
+      const unsettledAmount=map.unsettledAmount==null?0:num(row[map.unsettledAmount]);
+      const pdcAmount=map.pdcAmount==null?0:num(row[map.pdcAmount]);
+      const realizationAmount=map.realizationAmount==null?0:num(row[map.realizationAmount]);
+
+      if(!customer&&!billNo&&!receiptNo&&!projectName&&!totalReceipt&&!unsettledAmount&&!pdcAmount)continue;
+
+      out.push({
+        entityId:block.entity,entity:ecfg.label,currency:ecfg.currency,fx:ecfg.fx,
+        relationshipManager:clean(row[map.relationshipManager])||'Unassigned',
+        collectionManager:clean(row[map.collectionManager])||'Unassigned',
+        type:clean(row[map.type])||'Unassigned',
+        projectName,projectNumber:clean(row[map.projectNumber]),
+        profitCentre:clean(row[map.profitCentre])||'Unassigned',
+        division:clean(row[map.division])||'Unassigned',
+        billNo,billDate:caDate(row[map.billDate]),customer,invoiceAmt,buckets,
+        totalReceipt,realizationAmount,previousReceipt,unsettledAmount,pdcAmount,
+        receiptNo,receiptDate:caDate(row[map.receiptDate])
+      });
+    }
+  });
+  return{rows:out,blocks,headers};
+}
+function caReportingDate(){
+  try{
+    if(typeof window.reportDateDisplay==='function'){
+      const s=window.reportDateDisplay(),d=caDate(s);if(d)return d;
+    }
+  }catch(_){}
+  const s=localStorage.getItem('cf_reporting_date')||localStorage.getItem('reportingDate');
+  return caDate(s)||new Date();
+}
+function caInitPeriod(rows){
+  const f=S.collectionAging,rpt=caReportingDate();
+  const years=[...new Set(rows.map(r=>r.receiptDate&&r.receiptDate.getFullYear()).filter(Boolean))].sort();
+  if(!f.year)f.year=rpt.getFullYear();
+  if(!years.includes(Number(f.year))&&years.length)f.year=years[years.length-1];
+  return years;
+}
+function caDisplayAmount(row,key){
+  const value=Number(row[key])||0;
+  return S.collectionAging.entity==='GROUP'?value*(Number(row.fx)||1):value;
+}
+function caBucketAmount(row,key){
+  const value=Number(row.buckets&&row.buckets[key])||0;
+  return S.collectionAging.entity==='GROUP'?value*(Number(row.fx)||1):value;
+}
+function caFilterOptions(rows,key){
+  return [...new Set(rows.map(r=>clean(r[key])).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+}
+function caDateRange(){
+  const f=S.collectionAging,rpt=caReportingDate(),year=Number(f.year)||rpt.getFullYear();
+  if(f.period==='CUSTOM'){
+    return{from:caDate(f.from),to:caDate(f.to)||rpt};
+  }
+  if(f.period==='MONTH'){
+    const month=Number(f.month)||rpt.getMonth()+1;
+    const from=new Date(year,month-1,1),
+      monthEnd=new Date(year,month,0);
+    return{from,to:year===rpt.getFullYear()&&month===rpt.getMonth()+1&&rpt<monthEnd?rpt:monthEnd};
+  }
+  if(f.period==='YTD')return{from:new Date(year,0,1),to:year===rpt.getFullYear()?rpt:new Date(year,11,31)};
+  return{from:new Date(year,0,1),to:year===rpt.getFullYear()?rpt:new Date(year,11,31)};
+}
+function caFilteredRows(source){
+  const f=S.collectionAging,range=caDateRange();
+  return source.filter(r=>{
+    if(f.entity!=='GROUP'&&r.entityId!==f.entity)return false;
+    for(const key of ['profitCentre','division','relationshipManager','collectionManager','type']){
+      if(f[key]!=='ALL'&&clean(r[key])!==clean(f[key]))return false;
+    }
+    if(f.customer!=='ALL'&&clean(r.customer)!==clean(f.customer))return false;
+    if(f.project!=='ALL'&&clean(r.projectName||r.projectNumber)!==clean(f.project))return false;
+    if(f.invoice!=='ALL'&&clean(r.billNo)!==clean(f.invoice))return false;
+    if(f.receipt!=='ALL'&&clean(r.receiptNo)!==clean(f.receipt))return false;
+    if((Number(f.minimum)||0)>0&&caDisplayAmount(r,'totalReceipt')<(Number(f.minimum)||0))return false;
+
+    const d=r.receiptDate;
+    if(range.from||range.to){
+      if(!d)return false;
+      if(range.from&&d<range.from)return false;
+      if(range.to){
+        const inclusive=new Date(range.to);inclusive.setHours(23,59,59,999);
+        if(d>inclusive)return false;
+      }
+    }
+    return true;
+  });
+}
+function caCurrency(){
+  const f=S.collectionAging;
+  return f.entity==='GROUP'?'AED':caEntityCfg(f.entity).currency;
+}
+function caSum(rows,key){return rows.reduce((a,r)=>a+caDisplayAmount(r,key),0)}
+function caBucketSum(rows,key){return rows.reduce((a,r)=>a+caBucketAmount(r,key),0)}
+function caWeightedDays(rows){
+  let amount=0,weighted=0;
+  rows.forEach(r=>CA_BUCKETS.forEach(b=>{
+    const v=caBucketAmount(r,b.key);amount+=v;weighted+=v*b.mid;
+  }));
+  return amount?weighted/amount:0;
+}
+function caSettlementStatus(r){
+  if(!r.invoiceAmt)return'Unknown';
+  const paid=(Number(r.previousReceipt)||0)+(Number(r.totalReceipt)||0);
+  if(paid>=r.invoiceAmt-0.5)return'Fully Collected';
+  if(paid>0)return'Partially Collected';
+  return'No Collection';
+}
+function caKpi(label,value,meta,cls=''){
+  return`<div class="kpi recv-kpi"><div class="lbl">${esc(label)}</div><div class="val num ${cls}">${esc(value)}</div><div class="meta">${esc(meta||'')}</div></div>`;
+}
+function caUnitNote(){
+  return`<div class="recv-unit-note">Group figures are converted to AED · ALU source currency SAR × 0.975 · ALIS source currency OMR × 9.5. Entity views remain in source currency.</div>`;
+}
+function caFilters(source,years){
+  const f=S.collectionAging;
+  const entities=[...new Set(source.map(r=>r.entityId).filter(Boolean))].sort();
+  const entityRows=f.entity==='GROUP'?source:source.filter(r=>r.entityId===f.entity);
+  const opts=key=>caFilterOptions(entityRows,key);
+  const projects=[...new Set(entityRows.map(r=>clean(r.projectName||r.projectNumber)).filter(Boolean))].sort();
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const select=(key,label,values,all='All')=>`<label>${label}<select data-ca="${key}">
+    <option value="ALL">${all}</option>${values.map(x=>`<option value="${esc(x)}" ${clean(f[key])===clean(x)?'selected':''}>${esc(x)}</option>`).join('')}</select></label>`;
+  return`<div class="ca-filter-panel">
+    <div class="ca-filter-primary">
+      <label>Entity<select data-ca="entity"><option value="GROUP">Group</option>${entities.map(id=>`<option value="${esc(id)}" ${f.entity===id?'selected':''}>${esc(caEntityCfg(id).label)}</option>`).join('')}</select></label>
+      <label>Period<select data-ca="period">
+        <option value="YTD" ${f.period==='YTD'?'selected':''}>YTD</option>
+        <option value="MONTH" ${f.period==='MONTH'?'selected':''}>Month</option>
+        <option value="YEAR" ${f.period==='YEAR'?'selected':''}>Full Year</option>
+        <option value="CUSTOM" ${f.period==='CUSTOM'?'selected':''}>Custom</option>
+      </select></label>
+      <label>Year<select data-ca="year">${years.map(y=>`<option value="${y}" ${Number(f.year)===y?'selected':''}>${y}</option>`).join('')}</select></label>
+      <label>Month<select data-ca="month"><option value="0">All</option>${months.map((x,i)=>`<option value="${i+1}" ${Number(f.month)===i+1?'selected':''}>${x}</option>`).join('')}</select></label>
+      ${select('profitCentre','Profit Centre',opts('profitCentre'),'All profit centres')}
+      ${select('division','Division',opts('division'),'All divisions')}
+    </div>
+    <details class="ca-advanced"><summary>More filters</summary><div class="ca-filter-more">
+      ${select('relationshipManager','Account Manager',opts('relationshipManager'),'All account managers')}
+      ${select('collectionManager','Collection Manager',opts('collectionManager'),'All collection managers')}
+      ${select('type','Invoice Type',opts('type'),'All types')}
+      ${select('customer','Customer',opts('customer'),'All customers')}
+      ${select('project','Project',projects,'All projects')}
+      ${select('invoice','Invoice No.',opts('billNo'),'All invoices')}
+      ${select('receipt','Receipt No.',opts('receiptNo'),'All receipts')}
+      <label>Minimum Receipt<input data-ca="minimum" type="number" min="0" step="1000" value="${Number(f.minimum)||0}"></label>
+      <label>From<input data-ca="from" type="date" value="${esc(f.from||'')}"></label>
+      <label>To<input data-ca="to" type="date" value="${esc(f.to||'')}"></label>
+      <button type="button" data-ca-reset>Reset filters</button>
+    </div></details>
+    <div class="ca-view-tabs">
+      ${[['overview','Overview'],['aging','Receipt Aging'],['managers','Manager Performance'],['customers','Customers & Projects'],['detail','Receipt Detail']].map(x=>`<button data-ca-view="${x[0]}" class="${f.view===x[0]?'active':''}">${x[1]}</button>`).join('')}
+    </div>
+  </div>`;
+}
+function bindCaFilters(){
+  document.querySelectorAll('[data-ca]').forEach(el=>{
+    el.onchange=()=>{
+      const key=el.dataset.ca;
+      S.collectionAging[key]=(key==='year'||key==='month'||key==='minimum')?Number(el.value)||0:el.value;
+      if(key==='entity'){
+        ['profitCentre','division','relationshipManager','collectionManager','type','customer','project','invoice','receipt'].forEach(k=>S.collectionAging[k]='ALL');
+      }
+      content();
+    };
+  });
+  document.querySelectorAll('[data-ca-view]').forEach(b=>b.onclick=()=>{S.collectionAging.view=b.dataset.caView;content()});
+  const reset=document.querySelector('[data-ca-reset]');
+  if(reset)reset.onclick=()=>{
+    const rpt=caReportingDate();
+    S.collectionAging={
+      entity:'GROUP',profitCentre:'ALL',division:'ALL',relationshipManager:'ALL',
+      collectionManager:'ALL',type:'ALL',customer:'ALL',project:'ALL',
+      invoice:'ALL',receipt:'ALL',period:'YTD',year:rpt.getFullYear(),month:0,
+      from:'',to:'',view:'overview',minimum:0
+    };
+    content();
+  };
+}
+function caAgingTable(rows){
+  const ccy=caCurrency(),vals=CA_BUCKETS.map(b=>({label:b.label,value:caBucketSum(rows,b.key)})),
+    total=vals.reduce((a,x)=>a+x.value,0),max=Math.max(1,...vals.map(x=>x.value));
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Receipt Aging Distribution</h3>
+    <p class="hint">Aging of cash receipts based on the source aging buckets.</p></div></div>
+    <div class="ca-aging-bars">${vals.map((x,i)=>`<div class="ca-age-row"><div>${esc(x.label)}</div>
+      <div class="ca-age-track"><span style="width:${Math.max(1,x.value/max*100)}%"></span></div>
+      <div class="num">${fmt(x.value)}</div><div class="num">${pct(total?x.value/total*100:0)}</div></div>`).join('')}
+      <div class="ca-age-row total"><div>Total</div><div></div><div class="num">${fmt(total)}</div><div class="num">100%</div></div>
+    </div></div>`;
+}
+function caSummaryTable(rows,key,title){
+  const groups={};
+  rows.forEach(r=>{
+    const label=clean(r[key])||'Unassigned';
+    if(!groups[label])groups[label]={label,receipt:0,invoice:0,unsettled:0,pdc:0,over180:0,count:0,weighted:0};
+    const g=groups[label],receipt=caDisplayAmount(r,'totalReceipt');
+    g.receipt+=receipt;g.invoice+=caDisplayAmount(r,'invoiceAmt');g.unsettled+=caDisplayAmount(r,'unsettledAmount');
+    g.pdc+=caDisplayAmount(r,'pdcAmount');g.count++;
+    CA_BUCKETS.forEach(b=>{const v=caBucketAmount(r,b.key);if(b.key==='d180_365'||b.key==='gt365')g.over180+=v;g.weighted+=v*b.mid});
+  });
+  const arr=Object.values(groups).sort((a,b)=>b.receipt-a.receipt);
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${esc(title)}</h3></div></div>
+    <div class="recv-table-wrap"><table class="recv-table ca-summary-table"><thead><tr>
+      <th>${esc(title.replace('Performance','').trim())}</th><th>Receipts</th><th>Receipt Count</th><th>Avg Aging Days*</th><th>&gt;180 Days</th><th>Unsettled</th><th>PDC</th>
+    </tr></thead><tbody>${arr.map(g=>`<tr><td>${esc(g.label)}</td><td class="num">${fmt(g.receipt)}</td><td class="num">${fmt(g.count)}</td>
+      <td class="num">${fmt(g.receipt?g.weighted/g.receipt:0)}</td><td class="num">${fmt(g.over180)}</td>
+      <td class="num">${fmt(g.unsettled)}</td><td class="num">${fmt(g.pdc)}</td></tr>`).join('')}</tbody></table></div>
+    <p class="hint ca-footnote">* Approximate weighted days using bucket mid-points.</p></div>`;
+}
+function caEntityDivisionTable(rows){
+  const groups={};
+  rows.forEach(r=>{
+    const key=r.entity+'|'+r.profitCentre+'|'+r.division;
+    if(!groups[key])groups[key]={entity:r.entity,profitCentre:r.profitCentre,division:r.division,receipt:0,invoice:0,unsettled:0,pdc:0};
+    const g=groups[key];g.receipt+=caDisplayAmount(r,'totalReceipt');g.invoice+=caDisplayAmount(r,'invoiceAmt');
+    g.unsettled+=caDisplayAmount(r,'unsettledAmount');g.pdc+=caDisplayAmount(r,'pdcAmount');
+  });
+  const arr=Object.values(groups).sort((a,b)=>b.receipt-a.receipt);
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Entity / Profit Centre / Division</h3></div></div>
+    <div class="recv-table-wrap"><table class="recv-table"><thead><tr><th>Entity</th><th>Profit Centre</th><th>Division</th><th>Invoice Amount</th><th>Receipts</th><th>Unsettled</th><th>PDC</th></tr></thead>
+    <tbody>${arr.map(g=>`<tr><td>${esc(g.entity)}</td><td>${esc(g.profitCentre)}</td><td>${esc(g.division)}</td>
+      <td class="num">${fmt(g.invoice)}</td><td class="num">${fmt(g.receipt)}</td><td class="num">${fmt(g.unsettled)}</td><td class="num">${fmt(g.pdc)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function caTopTable(rows,key,title){
+  const groups={};
+  rows.forEach(r=>{
+    const label=clean(r[key])||'Unassigned';
+    if(!groups[label])groups[label]={label,receipt:0,invoice:0,previous:0,unsettled:0,pdc:0,count:0};
+    const g=groups[label];g.receipt+=caDisplayAmount(r,'totalReceipt');g.invoice+=caDisplayAmount(r,'invoiceAmt');
+    g.previous+=caDisplayAmount(r,'previousReceipt');g.unsettled+=caDisplayAmount(r,'unsettledAmount');g.pdc+=caDisplayAmount(r,'pdcAmount');g.count++;
+  });
+  const arr=Object.values(groups).sort((a,b)=>b.receipt-a.receipt).slice(0,50);
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${esc(title)}</h3><p class="hint">Top 50 by receipt amount</p></div></div>
+    <div class="recv-table-wrap"><table class="recv-table"><thead><tr><th>${esc(title.replace('Top ','').replace(' by Receipts',''))}</th><th>Receipts</th><th>Invoice Amount</th><th>Previous Receipt</th><th>Unsettled</th><th>PDC</th><th>Rows</th></tr></thead>
+    <tbody>${arr.map(g=>`<tr><td>${esc(g.label)}</td><td class="num">${fmt(g.receipt)}</td><td class="num">${fmt(g.invoice)}</td><td class="num">${fmt(g.previous)}</td><td class="num">${fmt(g.unsettled)}</td><td class="num">${fmt(g.pdc)}</td><td class="num">${fmt(g.count)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function caDetailTable(rows){
+  const sorted=rows.slice().sort((a,b)=>(b.receiptDate||0)-(a.receiptDate||0)).slice(0,1000);
+  return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>Receipt-Level Detail</h3><p class="hint">${fmt(rows.length)} matching rows · latest 1,000 shown</p></div></div>
+    <div class="recv-table-wrap ca-detail-wrap"><table class="recv-table ca-detail"><thead><tr>
+      <th>Entity</th><th>Receipt Date</th><th>Receipt No.</th><th>Customer</th><th>Invoice No.</th><th>Invoice Date</th>
+      <th>Project</th><th>Profit Centre</th><th>Division</th><th>Account Manager</th><th>Collection Manager</th><th>Type</th>
+      <th>Invoice Amt</th><th>Previous Receipt</th><th>Total Receipt</th><th>Unsettled</th><th>PDC</th><th>Settlement</th>
+    </tr></thead><tbody>${sorted.map(r=>`<tr>
+      <td>${esc(r.entity)}</td><td>${r.receiptDate?esc(r.receiptDate.toLocaleDateString('en-GB')):''}</td><td>${esc(r.receiptNo)}</td>
+      <td class="recv-customer-name">${esc(r.customer)}</td><td>${esc(r.billNo)}</td><td>${r.billDate?esc(r.billDate.toLocaleDateString('en-GB')):''}</td>
+      <td>${esc(r.projectName||r.projectNumber)}</td><td>${esc(r.profitCentre)}</td><td>${esc(r.division)}</td>
+      <td>${esc(r.relationshipManager)}</td><td>${esc(r.collectionManager)}</td><td>${esc(r.type)}</td>
+      <td class="num">${fmt(caDisplayAmount(r,'invoiceAmt'))}</td><td class="num">${fmt(caDisplayAmount(r,'previousReceipt'))}</td>
+      <td class="num">${fmt(caDisplayAmount(r,'totalReceipt'))}</td><td class="num">${fmt(caDisplayAmount(r,'unsettledAmount'))}</td>
+      <td class="num">${fmt(caDisplayAmount(r,'pdcAmount'))}</td><td>${esc(caSettlementStatus(r))}</td>
+    </tr>`).join('')}</tbody></table></div></div>`;
+}
+function caOverview(rows){
+  const ccy=caCurrency(),receipt=caSum(rows,'totalReceipt'),invoice=caSum(rows,'invoiceAmt'),
+    previous=caSum(rows,'previousReceipt'),unsettled=caSum(rows,'unsettledAmount'),pdc=caSum(rows,'pdcAmount'),
+    realization=caSum(rows,'realizationAmount'),avgDays=caWeightedDays(rows),
+    over180=caBucketSum(rows,'d180_365')+caBucketSum(rows,'gt365'),
+    receiptCount=new Set(rows.map(r=>r.receiptNo).filter(Boolean)).size||rows.length;
+  const full=rows.filter(r=>caSettlementStatus(r)==='Fully Collected').length;
+  return`<div class="grid kpis recv-kpis ca-kpis">
+    ${caKpi('Total Receipts',fmt(receipt),ccy)}
+    ${caKpi('Invoice Amount',fmt(invoice),ccy)}
+    ${caKpi('Previous Receipts',fmt(previous),ccy)}
+    ${caKpi('Unsettled Amount',fmt(unsettled),ccy,unsettled?'neg':'')}
+    ${caKpi('PDC Amount',fmt(pdc),ccy)}
+    ${caKpi('Realization Amount',fmt(realization),ccy)}
+    ${caKpi('Receipt Count',fmt(receiptCount),'Matching period')}
+    ${caKpi('Avg Receipt Aging',fmt(avgDays)+' days','Approx. weighted')}
+    ${caKpi('>180 Day Receipts',fmt(over180),ccy)}
+    ${caKpi('Fully Collected Rows',fmt(full),'Invoice + receipt test')}
+  </div>${caAgingTable(rows)}${caEntityDivisionTable(rows)}`;
+}
+function renderCollectionAging(){
+  const parsed=parseCollectionAging();
+  if(parsed.error)return`<div class="card panel recv-panel"><div class="empty"><strong>Collection Aging:</strong> ${esc(parsed.error)} Add the <strong>collection-aging</strong> Apps Script scope and refresh.</div></div>`;
+  const years=caInitPeriod(parsed.rows),filtered=caFilteredRows(parsed.rows),f=S.collectionAging;
+  let body='';
+  if(f.view==='aging')body=caAgingTable(filtered)+caEntityDivisionTable(filtered);
+  else if(f.view==='managers')body=`<div class="recv-two">${caSummaryTable(filtered,'relationshipManager','Account Manager Performance')}${caSummaryTable(filtered,'collectionManager','Collection Manager Performance')}</div>`;
+  else if(f.view==='customers')body=`<div class="recv-two">${caTopTable(filtered,'customer','Top Customers by Receipts')}${caTopTable(filtered,'projectName','Top Projects by Receipts')}</div>`;
+  else if(f.view==='detail')body=caDetailTable(filtered);
+  else body=caOverview(filtered);
+
+  setTimeout(bindCaFilters,0);
+  return`${caFilters(parsed.rows,years)}${caUnitNote()}
+    <div class="ca-report-meta"><strong>Reporting date:</strong> ${esc(caReportingDate().toLocaleDateString('en-GB'))}
+      <span>· ${fmt(filtered.length)} source rows match the current filters</span></div>${body}`;
+}
 function renderCollectionsPerformance(){
   const data=parseCollectionSheet();
   if(data.error)return`<div class="card panel recv-panel"><div class="empty">Collection Performance requires the <strong>Coll vs Target</strong> sheet. ${esc(data.error)}.</div></div>`;
@@ -1481,10 +1897,12 @@ function renderCollectionsPerformance(){
   return html;
 }
 function optional(kind){const names=C[kind],src=first(names);if(!src)return`<div class="card panel recv-panel"><div class="empty">${kind==='movement'?'Movement Analysis requires Receivable History or Receivable Movement.':'Collection reporting requires Collection Targets and Collection Actuals.'} Add the optional sheet(s) to Google Sheets and Apps Script, then refresh.</div></div>`;return`<div class="card panel recv-panel"><div class="panelhead"><div><h3>${kind==='movement'?'Receivable Movement Analysis':'Collections Performance'}</h3></div></div><div class="recv-detected">Data source detected: <strong>${esc(src.name)}</strong>. Use the standard template supplied in the ZIP.</div></div>`}
-function content(){const root=$('recvContent');if(!root)return;try{const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers'){
+function content(){const root=$('recvContent');if(!root)return;try{
+if(S.section==='collectionAging'){root.innerHTML=renderCollectionAging();return;}
+const rs=rows(),a=aggregate(rs);if(!rs.length){root.innerHTML='<div class="card panel"><div class="empty">No receivable rows detected. Confirm the ERP tabs are exported and contain Account Name, Dimension, Outstanding Amount and aging headers.</div></div>';return}if(S.section==='aging')root.innerHTML=aging(a,rs);else if(S.section==='agingDetail')root.innerHTML=renderAgingDetail(rs);else if(S.section==='customers'){
   root.innerHTML=`${customerFilterOptions(rs)}${topTable(rs,'total','All Outstanding Customers')}${topTable(rs,'over180','All Customers Over 180 Days')}`;
   setTimeout(bindCustomerFilters,0);
-}else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else root.innerHTML=overview(rs,a);
+}else if(S.section==='customerMovement')root.innerHTML=renderOver180Movement();else if(S.section==='movement')root.innerHTML=renderMovementAnalysis();else if(S.section==='collections')root.innerHTML=renderCollectionsPerformance();else if(S.section==='collectionAging')root.innerHTML=renderCollectionAging();else root.innerHTML=overview(rs,a);
 setTimeout(bindAgingFilterControls,0)}
 catch(err){
   console.error('Receivables render error',err);
@@ -1492,6 +1910,35 @@ catch(err){
 }}
 function render(){entityTabs();sectionTabs();const c=cfg(S.entity),sub=$('recvSubtitle');if(sub)sub.textContent=S.entity==='GROUP'?'Group converted to AED · SAR × 0.975 · OMR × 9.5'+(S.updated?' · Updated '+S.updated:''):`${c.label} shown in ${c.currency}${c.fx!==1?' · Group conversion rate '+c.fx+' AED':''}${S.updated?' · Updated '+S.updated:''}`;content()}
 function styles(){if($('receivablesModuleStyles'))return;const s=document.createElement('style');s.id='receivablesModuleStyles';s.textContent=`#view-receivables .recv-toolbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}#view-receivables .recv-entity-tabs,#view-receivables .recv-section-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}#view-receivables .recv-pill,#view-receivables .recv-subtab{border:1px solid #d8d1c4;background:#fff;border-radius:999px;padding:8px 13px;font-weight:700;cursor:pointer}#view-receivables .recv-pill.active,#view-receivables .recv-subtab.active{background:#0b3767;color:#fff;border-color:#0b3767}#view-receivables .recv-pill:disabled{opacity:.45}#view-receivables .recv-subtab{border-radius:8px}#view-receivables .recv-kpis{grid-template-columns:repeat(4,minmax(180px,1fr))}#view-receivables .recv-kpi .val{font-size:1.35rem}#view-receivables .recv-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}#view-receivables .recv-panel{margin-top:14px;overflow:hidden}#view-receivables .recv-bar-row{display:grid;grid-template-columns:minmax(125px,190px) 1fr 125px;gap:10px;align-items:center;margin:9px 0}#view-receivables .recv-bar-label{font-weight:650;overflow:hidden;text-overflow:ellipsis}#view-receivables .recv-bar-track{height:16px;background:#e9edf2;border-radius:20px;overflow:hidden}#view-receivables .recv-bar-fill{height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}#view-receivables .recv-bar-value{text-align:right;font-variant-numeric:tabular-nums}#view-receivables .recv-table-wrap{overflow:auto}#view-receivables .recv-table{width:100%;border-collapse:collapse}#view-receivables .recv-table th{background:#0b3767;color:#fff;padding:9px;text-align:left;white-space:nowrap}#view-receivables .recv-table td{padding:8px 9px;border-bottom:1px solid #e7e3dc}#view-receivables .recv-table tbody tr:nth-child(even){background:#f7fafc}
+
+
+#view-receivables .ca-filter-panel{margin:10px 0;padding:12px;background:#f6f3ed;border:1px solid #ddd6ca;border-radius:11px}
+#view-receivables .ca-filter-primary,#view-receivables .ca-filter-more{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:9px;align-items:end}
+#view-receivables .ca-filter-panel label{display:flex;flex-direction:column;gap:4px;font-size:.69rem;font-weight:850;color:#526171;text-transform:uppercase;letter-spacing:.04em}
+#view-receivables .ca-filter-panel select,#view-receivables .ca-filter-panel input{width:100%;min-width:0;border:1px solid #cfc7bb;border-radius:7px;padding:7px 8px;background:#fff}
+#view-receivables .ca-advanced{margin-top:9px}#view-receivables .ca-advanced summary{cursor:pointer;font-weight:800;color:#173f6d;margin-bottom:8px}
+#view-receivables .ca-filter-more{grid-template-columns:repeat(5,minmax(150px,1fr))}
+#view-receivables .ca-filter-more button{align-self:end;border:1px solid #cfc7bb;background:#fff;border-radius:7px;padding:8px 11px;font-weight:800;cursor:pointer}
+#view-receivables .ca-view-tabs{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+#view-receivables .ca-view-tabs button{border:1px solid #d4cdc2;background:#fff;border-radius:8px;padding:7px 11px;font-weight:800;cursor:pointer}
+#view-receivables .ca-view-tabs button.active{background:#0b3767;color:#fff;border-color:#0b3767}
+#view-receivables .ca-report-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0;color:#5e6974;font-size:.78rem}
+#view-receivables .ca-kpis{grid-template-columns:repeat(5,minmax(150px,1fr))!important}
+#view-receivables .ca-aging-bars{padding:4px 0}
+#view-receivables .ca-age-row{display:grid;grid-template-columns:120px 1fr 150px 80px;gap:10px;align-items:center;padding:6px 2px;border-bottom:1px solid #eee8de}
+#view-receivables .ca-age-row.total{font-weight:900;background:#eef3f8;border-top:2px solid #173f6d}
+#view-receivables .ca-age-track{height:15px;background:#e8edf2;border-radius:20px;overflow:hidden}
+#view-receivables .ca-age-track span{display:block;height:100%;background:linear-gradient(90deg,#0b3767,#4b89c8);border-radius:20px}
+#view-receivables .ca-summary-table th,#view-receivables .ca-summary-table td{white-space:nowrap}
+#view-receivables .ca-detail-wrap{max-height:650px;overflow:auto;scrollbar-gutter:stable both-edges}
+#view-receivables .ca-detail{min-width:2200px}
+#view-receivables .ca-detail thead th{position:sticky;top:0;z-index:20}
+#view-receivables .ca-footnote{margin-top:8px}
+@media(max-width:1200px){
+ #view-receivables .ca-filter-primary{grid-template-columns:repeat(3,minmax(145px,1fr))}
+ #view-receivables .ca-filter-more{grid-template-columns:repeat(3,minmax(145px,1fr))}
+ #view-receivables .ca-kpis{grid-template-columns:repeat(3,minmax(150px,1fr))!important}
+}
 
 #view-receivables .recv-unit-note{
   margin:10px 0 2px;padding:7px 10px;border-left:4px solid #0b3767;
